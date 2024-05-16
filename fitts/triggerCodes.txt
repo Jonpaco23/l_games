@@ -1,0 +1,37 @@
+#Below are all of the trigger codes for the EEG Experiment.
+
+0: The experiment has begun/first movement
+
+1: The robot is moving left inward
+
+2: Left target has been hit
+
+3: The robot has gone through the middle
+
+4: Right target has been hit
+
+5: Down target has been hit
+
+6: Up target has been hit
+
+7: New target has appeared
+
+8: The experiment has ended
+
+9: Robot is moving left outward
+
+10. Robot is moving down inward
+
+11. Robot is moving down outward
+
+12. Robot is moving right inward
+
+13. Robot is moving right outward
+
+14. Robot is moving up inward
+
+15. Robot is moving up outward
+
+16. Break has begun
+
+17. Break has ended

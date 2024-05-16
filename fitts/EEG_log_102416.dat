@@ -1,0 +1,13 @@
+# imt log
+s logheadsize 000249
+s logcolumns 20
+s logname /home/testac/therapist/1/exper/20180628_Thu/Fitts/EEG_log_102416.dat
+s logversion 2.0
+s logdate "Thu Jun 28 10:24:16 EDT 2018"
+s logidate 1530195856
+
+# begin user data
+
+# end user data
+
+#####

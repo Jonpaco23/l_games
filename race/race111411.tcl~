@@ -1,0 +1,1308 @@
+#! /usr/bin/wish
+
+# Copyright 2000-2004 Interactive Motion Technologies, Inc
+# original game: trb 9/2000
+# edited and augmented by:
+# Konstantinos Michmizos, Fall 2011
+# konmic@mit.edu
+
+# rtilinux port 2/2005
+
+# racer game
+
+# add bonus coins?
+
+# normal level is 5.  it can be a decimal fraction!
+
+# Tk GUI library
+package require Tk
+
+global obf
+
+font create default -family Times -size -18
+option add *font default
+
+source ../common/util.tcl
+source ../common/menu.tcl
+source myclock.tcl
+source math.tcl
+source $::env(I18N_HOME)/i18n.tcl
+
+set ob(crobhome) $::env(CROB_HOME)
+
+source $ob(crobhome)/shm.tcl
+
+# is this planar or wrist?
+localize_robot
+
+# for balto ankle
+source ../race/race.config
+# end for balto
+
+proc rancolor {} {
+	set rainbow {red orange yellow green4 blue magenta4 magenta}
+	lindex $rainbow [irand 7]
+}
+
+proc do_title {} {
+	global ob mob
+	wm title . "Race    Level: $mob(level)    Gates $mob(gates_created)    Score: $mob(score)    Hit left $mob(left)    Hit right $mob(right)"
+}
+
+proc del_marks {} {
+	.c delete mark
+	.c delete marka
+	#stop_movebox 0
+}
+
+# make a new gate every 2-3 sec
+proc do_gate {} {
+    global ob mob
+ 
+    after 10000 del_marks
+    
+    if {!$ob(running) || $mob(gates_created) >= $ob(endgame)} {
+	return
+    }
+    
+    set i [expr {$mob(gates_created) % $ob(endgame)}]
+    set spacing [expr {($ob(winwidth) - ($ob(side2) + $ob(gatew)))/double($ob(npos)-1)}]
+    set randi [lindex $ob(gate_list) $i]
+    # set randi [expr {$i % $ob(npos)}]
+    set x1 [expr {$ob(side) - $ob(half,x) + $spacing * $randi}]
+    set x2 [expr {$x1 + $ob(gatew)}]
+    set gate_edge_width 0.006
+    set x1a [expr {$x1 - $gate_edge_width}]
+    set x2a [expr {$x2 + $gate_edge_width}]
+    set ob(cen) [expr {($x1 + $x2) / 2.}]
+    set col [rancolor]
+    # swaps handles swapping x and y coordinates for horizontal motion
+    
+    eval set r [.c create rect [swaps -.2 .185 $x1 .195]]
+    # color $col
+    if {$ob(ankle)} {
+	set col gray20
+    }
+    .c itemconfig $r -outline "" -fill $col -tag [list falling gate left g$i]
+    eval set r [ .c create rect [swaps $x2 .185 .2 .195]]
+    .c itemconfig $r -outline "" -fill $col -tag [list falling gate right g$i]
+    
+    if {$ob(ankle)} {
+	set col [rancolor]
+	eval set r [.c create rect [swaps $x1a .185 $x1 .195]]
+	.c itemconfig $r -outline "" -fill $col -tag [list falling gate left g$i]
+	
+	eval set r [.c create rect [swaps $x2 .185 $x2a .195]]
+	.c itemconfig $r -outline "" -fill $col -tag [list falling gate left g$i]
+	if {$ob(hdir) == "0"} {
+	    draw_animal .c $i $ob(cen) -.2
+	} else {
+	    draw_animal .c $i .2 [expr 0. - $ob(cen)]
+	}
+    }
+    
+    .c scale g$i 0 0 $ob(scale) -$ob(scale)
+    #after $ob(delgaterate) del_thing g$i
+    incr mob(gates_created)
+    do_title
+    
+	set time_to_next_gate [expr {int(5000./abs($ob(gspeed)))}]
+	after $time_to_next_gate do_gate
+	# puts "randi $randi center $ob(cen) spacing $spacing gatew $ob(gatew)"
+   	 set ob(prevrandi) $randi
+
+	if {$ob(motorforces)} {
+		if {$i == 0} {
+			#calculate_moveit_parameters	
+			set dest $ob(cen)
+			after $ob(slottime_soft_mb) [list adap_moveit {0 $ob(slotticks) 1} $dest]
+			set ob(moveit_wait) [list adap_moveit {0 400 0} $dest]
+			set ob(moveit_state) pre_wait
+		}
+	}	
+}
+
+proc adap_moveit {forlist dest} {
+	global ob
+
+	set forlist [uplevel 1 [list subst -nocommands $forlist]]
+	set dest [uplevel 1 [list subst -nocommands $dest]]
+
+	set x [rshm ankle_ie_pos]
+	set y [rshm ankle_dp_pos]
+	if {$ob(hdir)} {
+		set src $x
+	} else {
+		set src $y
+	}
+
+	# ??? to be used for allowing the d/p hard movebox to happen (see moveit)
+	set ob(initial_x) $x
+
+	# these only have x or y, they need y/w/h
+    	lappend src 0.0 0.0 0.0
+    	lappend dest 0.0 0.0 0.0
+	set src [eval swaps $src]
+	set dest [eval swaps $dest]
+
+	set src_open $dest
+
+	if {!$ob(adaptive)} {
+		# if not adaptive, a simple movebox.
+		movebox 0 8 $forlist $src $dest
+		set ob(moveit_state) movebox
+		return
+    	}
+
+	# a stationary slot immediately
+	wshm ankle_stiff 7.	
+	movebox 0 8 {0 1 0} $src_open $dest
+
+	# two different moveboxes.
+    	# if we get a vlim event, this happens early.
+    	set ob(moveit_after) [after $ob(slottime_hard_mb) [list moveit $forlist $dest]]
+}
+
+proc moveit {forlist dest} {
+	global ob mob
+
+	set x [rshm ankle_ie_pos]
+	set y [rshm ankle_dp_pos]
+
+	set src [list $x $y 0.0 0.0]
+	# dest has already been swaped (if needed)
+	set src [eval swaps $src]
+	
+	set src [point_to_collapse $src $dest]
+
+	wshm ankle_stiff 60
+	movebox 0 8 $forlist $src $dest
+	set ob(moveit_state) movebox
+}
+
+proc cancel_moveit_timeouts {} {
+    global ob
+
+	# take the center for the new gate 
+	set ob(new_gate) 1
+    if {[info exists ob(moveit_after)]} {
+	#puts "cancel moveit_After"
+	after cancel $ob(moveit_after)
+	unset ob(moveit_after)
+    }
+    if {[info exists ob(moveit_wait)]} {
+	after cancel $ob(moveit_wait)
+	unset ob(moveit_wait)
+    }
+}
+
+proc calculate_moveit_parameters {} {
+	global ob
+
+	set ob(time_gate_travel) [expr {int(4000./abs($ob(gspeed)))}]
+    	set ob(splattime) [expr {int(2.0*$ob(time_gate_travel)/3.0)}]
+	
+	if {$ob(time_gate_travel)>4000} {
+		set ob(slottime_soft_mb) [expr {int(0.33*$ob(time_gate_travel))}]
+		set ob(slottime_hard_mb) [expr {int(0.4*($ob(time_gate_travel)-$ob(slottime_soft_mb)))}]
+	} else {
+ 		set ob(slottime_soft_mb) 0
+		set ob(slottime_hard_mb) [expr {int(0.4*$ob(time_gate_travel))}]
+	}
+	set ob(slotticks) [expr {int(double((($ob(time_gate_travel)-$ob(slottime_hard_mb))/1000.0) * $ob(Hz)))}]
+}
+
+proc mark {x col} {
+	global ob
+
+	# until bugfix
+	return
+
+	set pos [centxy $x -.19 .005]
+	set pos [swaps $pos]
+	set mark [.c create rect $pos -tag mark -fill $col]
+	.c scale $mark 0 0 $ob(scale) -$ob(scale)
+}
+
+# move all the falling stuff every ob(fallms) ms (5)
+# deleting the wall we hit keeps us from hitting it again.
+
+proc fall {} {
+	global ob mob
+
+	#puts " Gate-Splat Distance (in ms) = $ob(splattime)"
+	if {!$ob(running)} {
+		return
+	}
+
+	set gspeed $ob(gspeed)
+	# move all the falling things $ob(level) pixels
+	if {$ob(hdir)} {
+		set gspeed [expr {-abs($gspeed)}]
+	}
+	eval .c move falling [swaps 0 $gspeed]
+
+	set bbox [.c bbox $ob(racer)]
+	set hit [lindex [eval .c find overlapping $bbox] 2]
+	set tags [.c gettags $hit]
+	set isanimal [lsearch -inline $tags animal]
+	set isbad [lsearch -inline $tags bad]
+	set lr [lsearch -inline -regexp $tags {left|right}]
+
+	if {"$hit" != "" && $isanimal != "animal" && $isbad != "bad" } {
+		if {$lr != ""} {
+		    incr mob($lr)
+		}
+		set htag [lsearch -inline -regexp $tags {^g[0-9][0-9]*}]
+		if {$htag != ""} {
+		    regsub g $htag "" n
+		    .c delete $htag
+		    .c delete a$n
+		    after 200 .c delete b$n
+		}
+		hit
+	}
+	if {"$hit" != "" && $isbad == "bad" } {
+	set htag [lsearch -inline -regexp $tags {^b[0-9][0-9]*}]
+		if {$htag != ""} {
+		    regsub b $htag "" n
+		    .c delete $htag
+		    .c delete b$n
+		}
+		   hitsplat
+	}
+	if {"$hit" != "" && $isanimal == "animal"} {
+	set htag [lsearch -inline -regexp $tags {^a[0-9][0-9]*}]
+		if {$htag != ""} {
+			regsub g $htag "" n
+			thrugate
+			.c delete $n
+		}
+		hitanimal
+	}
+	if {$ob(new_gate)} {
+		# for estimating performance metrics
+		set ob(oldcen) $ob(cen)
+		set ob(new_gate) 0
+	}
+
+	if {$ob(endgame) <= 0 || $ob(gates_deleted) <= $ob(endgame)} {
+		after $ob(fallms) fall
+	}
+}
+
+# delete things with tag i
+
+proc del_thing {i} {
+	global mob
+	if {[.c find withtag $i] != ""} {
+		if {[string index $i 0] == "g"} {
+			thrugate
+		}
+	}
+	.c delete $i
+}
+
+proc make_racer {} {
+	global ob mob
+
+        if {$mob(round)} {
+                set shape oval
+        } else {
+                set shape rectangle
+        }
+
+	if {[info exists ob(racer)]} {
+		.c delete $ob(racer)
+	}
+
+	set ob(racer) [.c create $shape 0 0 .023 .067  -outline "" \
+		-fill yellow -tag racer]
+	.c scale racer 0 0 $ob(scale) -$ob(scale)
+}
+
+proc size_racer {} {
+	global ob mob
+
+	# distance from screen edge to racer face
+	set rdist .015
+
+	# racer dimensions
+	set ob(racw) .0115
+	set ob(racw) [bracket $ob(racw) .005 .1]
+	set ob(rach) .033
+	set ob(racw2) [expr {$ob(racw) / 2.}]
+
+	# racer
+	set x1 -$ob(racw2)
+	set y1 -.15
+	set x2 $ob(racw2)
+	set y2 [expr {$y1 + $ob(rach)}]
+	eval .c coords racer [swaps $x1 $y1 $x2 $y2]
+	.c scale racer 0 0 $ob(scale) -$ob(scale)
+}
+
+proc Dialog_Race {string} {
+    global drace ob
+    set w .drace
+    if {[winfo exists $w]} {destroy $w}
+    if [Dialog_Create $w $string -borderwidth 10] {
+
+	if {$ob(ankle)} {
+	    label $w.speed_label -text "Speed:"
+
+	    set ob(drace,speed) medium_speed
+	    radiobutton $w.b_speed_slow -text [imes "Slow Speed"] \
+		-variable ob(drace,speed) -relief flat -value slow_speed
+	    radiobutton $w.b_speed_medium -text [imes "Medium Speed"] \
+		-variable ob(drace,speed) -relief flat -value medium_speed
+	    radiobutton $w.b_speed_fast -text [imes "Fast Speed"] \
+		-variable ob(drace,speed) -relief flat -value fast_speed
+
+	    label $w.rom_label -text "Range of Motion:"
+
+	    set ob(drace,rom) medium_rom
+	    radiobutton $w.b_rom_short -text [imes "Short ROM"] \
+		-variable ob(drace,rom) -relief flat -value short_rom
+	    radiobutton $w.b_rom_medium -text [imes "Medium ROM"] \
+		-variable ob(drace,rom) -relief flat -value medium_rom
+	    radiobutton $w.b_rom_long -text [imes "Long ROM"] \
+		-variable ob(drace,rom) -relief flat -value long_rom
+	    radiobutton $w.b_rom_random -text [imes "Random"] \
+		-variable ob(drace,rom) -relief flat -value random
+
+	    label $w.stiff_label -text "Stiffness:"
+
+	    set ob(drace,stiff) medium_stiff
+	    radiobutton $w.b_stiff_low -text [imes "Low Stiffness"] \
+		-variable ob(drace,stiff) -relief flat -value low_stiff
+	    radiobutton $w.b_stiff_medium -text [imes "Medium Stiffness"] \
+		-variable ob(drace,stiff) -relief flat -value medium_stiff
+	    radiobutton $w.b_stiff_high -text [imes "High Stiffness"] \
+		-variable ob(drace,stiff) -relief flat -value high_stiff
+
+	    label $w.spacer_label -text ""
+	}
+
+    if {$ob(ankle)} {
+	set ob(drace,dof) ankle_dp
+	label $w.axis_label -text "Axis:"
+	radiobutton $w.b_ankle_dp -text [imes "Ankle Dors/Plant"] \
+	    -variable ob(drace,dof) -relief flat -value ankle_dp
+	radiobutton $w.b_ankle_ie -text [imes "Ankle Inv/Ev"] \
+	    -variable ob(drace,dof) -relief flat -value ankle_ie
+    }
+
+	checkbutton $w.logdata -text [imes "Log Data"] \
+	    -variable ob(drace,logdata) -relief flat 
+	checkbutton $w.sendforces -text [imes "Send Forces"] \
+	    -variable ob(drace,sendforces) -relief flat
+
+	label $w.dummy
+	button $w.cancel -text [imes "Cancel"] \
+	    -command {set ob(drace,ok) 0}
+	button $w.ok -text [imes "Run"] \
+	    -command {set ob(drace,ok) 1}
+
+        if {$ob(ankle)} {
+	grid $w.axis_label -sticky w
+	grid $w.b_ankle_dp -sticky w
+	grid $w.b_ankle_ie -sticky w
+        }
+	if {$ob(ankle)} {
+	    grid $w.speed_label -sticky w
+	    grid $w.b_speed_slow -sticky w
+	    grid $w.b_speed_medium -sticky w
+	    grid $w.b_speed_fast -sticky w
+	    
+	    grid $w.rom_label -sticky w
+	    grid $w.b_rom_short -sticky w
+	    grid $w.b_rom_medium -sticky w
+	    grid $w.b_rom_long -sticky w
+	    grid $w.b_rom_random -sticky w
+	    
+	    grid $w.stiff_label -sticky w
+	    grid $w.b_stiff_low -sticky w
+	    grid $w.b_stiff_medium -sticky w
+	    grid $w.b_stiff_high -sticky w
+	    
+	    grid $w.spacer_label -sticky w
+	}
+
+	grid $w.logdata -sticky w
+	grid $w.sendforces -sticky w
+	grid $w.dummy
+	grid $w.cancel $w.ok
+    }
+    set ob(drace,ok) 0
+    Dialog_Wait $w ob(drace,ok) $w.ok
+    Dialog_Dismiss $w
+    return $ob(drace,ok)
+}
+
+proc init_adap_controller {} {
+	global ob mob
+
+	set ob(adaptive) 1
+
+	# for checking if the patient has moved
+	set ob(check_move_dp) 0
+	set ob(check_move_ie) 0
+
+	set ob(init_dp) 0
+	set ob(init_ie) 0
+
+	# this allows the hard i/e movebox to timeout, 
+	# when the player has not moved enough by himself
+	set ob(hard_mb_timeout) 0
+
+	set ob(moveit_state) pause
+
+	set ob(new_gate) 1
+	set ob(oldcen) 0
+
+	# every k*ntimes
+	set ob(ntimes) 20
+
+	# for estimating P1 metric
+	set ob(P1) [list]
+	set ob(dx) [list]
+
+	# for estimating P2 metric
+	set ob(P2) [list]
+	set ob(x) [list]
+	
+	# for estimating P3 metric
+	set ob(P3) [list]
+	set ob(speedtraj) [list]
+
+	# for estimating P4 metric
+	set ob(P4) [list]
+	set ob(torque) [list]
+
+	# median values of the tracked metrics
+	set ob(medP1) 0
+	set ob(medP2) 0
+	set ob(medP3) 0
+	set ob(medP4) 0
+	
+	# adjustable parameter values
+	set ob(lstiff) [list 10 20 30 40 50 60 70 80 90 100]
+	set ob(lgspeed) [list 0.4 0.5 0.6 0.7 0.8 0.9 1.0 1.1 1.2 1.4]
+
+	# these are going to be used for the adaptive change of the variables
+
+	set ob(level_stiff) $mob(level)
+	set ob(level_gspeed) $mob(level)
+	set ob(stiff) [lindex $ob(lstiff) [expr {$ob(level_stiff)-1}]]
+	set ob(gspeed) [lindex $ob(lgspeed) [expr {$ob(level_gspeed)-1}]] 
+
+	# this is to indicate if a player is sluggish - then we challenge him 	
+	set ob(player_was_sluggishP1) 0
+	set ob(player_was_sluggishP2) 0
+	set ob(player_was_sluggishP3) 0
+	set ob(player_was_sluggishP4) 0
+
+	calculate_moveit_parameters
+}
+
+proc init_race {} {
+    global ob mob env
+
+    set ob(programname) race
+
+    set ob(running) 0
+
+    set ob(endgame) 0
+
+    set ob(whichgame) "def"
+    set mob(hdir) 0
+    
+    # 1 for sound
+    set ob(sound) 1
+
+    # print debug arrow?
+    set ob(domark) 1
+
+    set ob(prevrandi) c
+
+    wm withdraw .
+    set ob(motorforces) 0
+    set ob(savelog) 0
+
+    set ob(asklog) 1
+    #set ob(asklog) 0
+    set env(PATID) test
+	if {$ob(asklog)} { 
+	if {![info exists env(PATID)]} {
+	    error "Please enter a Patient ID"
+	    exit
+	}
+	if {$env(PATID) == ""} {
+	    error "Please enter a Patient ID"
+	    exit
+	}
+	set ret [Dialog_Race "Race Setup"]
+	if {$ret == 0} {
+	    exit
+	}
+	if {$ob(drace,sendforces)} {
+	    set ob(motorforces) 1
+	}
+	if {$ob(drace,logdata)} {
+	    set ob(savelog) 1
+	}
+	switch $ob(drace,dof) {
+	    "ankle_ie" {
+		set mob(hdir) 0
+		set ob(whichgame) "aie"
+	    } 
+	    "ankle_dp" {
+		set mob(hdir) 1
+		set ob(whichgame) "adp"
+	    } 
+	    default {
+		set mob(hdir) 0
+		set ob(whichgame) "def"
+	    }
+	}
+    }
+
+    set curtime [clock seconds]
+    # planar
+    set ob(logfnid) 0
+    set ob(logvars) 8
+	if {$ob(ankle)} {
+		set ob(logfnid) 9
+		set ob(logvars) 12
+    	} 
+
+    set ob(logdirbase) $::env(THERAPIST_HOME)
+
+    set ob(patname) [fnstring $env(PATID)]
+    set ob(gametype) eval
+    set ob(datestamp) [clock format $curtime -format "%Y%m%d_%a"]
+    set ob(timestamp) [clock format $curtime -format "%H%M%S"]
+    set ob(dirname) [file join $ob(logdirbase) $ob(patname) \
+	$ob(gametype) $ob(datestamp) ]
+
+    set ob(dp_scale) 2.0
+    # ie -.0147 .. .0147
+    set ob(ie_scale) 2.0
+
+    set ob(shaking) 0
+
+    set mob(gates_created) 0
+    set ob(gates_deleted) 0
+    set ob(splathit) 0
+
+    set ob(scale) 1500.0
+    set ob(winwidth) .4
+    set ob(winheight) .4
+
+    set ob(npos) 8
+    # with forces, 320 slots.  with logging, 80 slots.
+    if $ob(motorforces) {
+	set ob(nsets) 40
+    } else {
+	set ob(nsets) 10
+    }
+    set ob(side) .02
+    set ob(side2) [expr {$ob(side) * 2.}]
+
+    # centers
+    set ob(half,x) [expr {$ob(winwidth) / 2.}]
+    set ob(half,y) [expr {$ob(winheight) / 2.}]
+    set ob(cx) 0.0
+    set ob(cy) 0.0
+
+    set ob(can,x) 600
+    set ob(can,y) 600
+    set ob(can2,x) [expr {$ob(can,x) / 2.}]
+    set ob(can2,y) [expr {$ob(can,y) / 2.}]
+
+	canvas .c -width 600 -height 600
+
+	if {$mob(hdir)} {
+		set img(field) [image create photo -format gif -file "racetrack_hriz.gif"]
+	} else {
+		set img(field) [image create photo -format gif -file "racetrack_vert.gif"]		
+	}
+  	set ob(field) [.c create image 0 0 -image $img(field) -tag track -anchor center]
+
+	.c config -highlightthickness 0
+	.c config -scrollregion [list -$ob(can2,x) -$ob(can2,y) $ob(can2,x) $ob(can2,y)]
+
+	# create menu buttons
+	button .but1 -text " New Game" -command new_race
+	place .but1 -in . -relx 0.12 -rely 0.78 -anchor ne
+
+	button .but2 -text "Stop Game" -command stop_race
+	place .but2 -in . -relx 0.265 -rely 0.78 -anchor ne
+
+	button .but3 -text " Menu " -command {menu_hide .menu}
+	place .but3 -in . -relx 0.14 -rely 0.68 -anchor center
+
+	button .but4 -text " Exit " -command done
+	place .but4 -in . -relx 0.14 -rely 0.92 -anchor center
+
+    set ob(bigcan) .c
+    grid .c
+
+    wm geometry . 1000x675
+    . config -bg gray20
+	place .c -relx 0.575  -rely 0.5 -anchor center
+
+	# create a clock canvas
+	set ob(clcksize) 170
+        grid [canvas .clock -width $ob(clcksize) -height $ob(clcksize) -bg gray20 -highlightthickness 0] -sticky news
+        grid rowconfigure . 0 -weight 1
+        grid columnconfigure . 0 -weight 1
+
+    set ob(hdir) $mob(hdir)
+    set mob(round) 1
+
+    domenu
+
+    make_racer
+
+    size_racer
+
+    make_clock
+
+    bind . <s> stop_race
+    bind . <n> new_race
+    bind . <q> {done}
+    wm protocol . WM_DELETE_WINDOW { done }
+
+    start_rtl
+    wshm no_safety_check 1
+    if {$ob(ankle)} {
+	wshm ankle_stiff 100.
+	wshm ankle_damp 1.
+    }
+
+    if {$ob(savelog)} {
+	wshm logfnid $ob(logfnid)
+    }
+
+	if {$ob(motorforces)} {
+		acenter
+		after 300 stop_movebox 0
+	}
+
+    label .disp -textvariable mob(score) -font $ob(scorefont) -bg gray20 -fg yellow
+    place .disp -in . -relx 1.0 -rely 0.0 -anchor ne
+    do_title
+    wm deiconify .
+}
+
+proc stop_race {} {
+	global mob ob
+
+	set ob(running) 0
+	# cancel all afters
+	foreach id [after info] {after cancel $id}
+	# in case it's red.
+	after 500 .c itemconfig racer -fill yellow
+
+	# start this again
+	do_drag .c
+
+	.c delete falling
+	if {$ob(motorforces)} {
+		acenter
+		after 100 stop_movebox 0
+	}	
+	if {$mob(racrow) > $mob(maxinrow)} {
+		set mob(maxinrow) $mob(racrow)
+	}
+
+	glog "score=$mob(score) dir=$mob(hdir) level=$mob(level) gates=$mob(gates_created) gw=$mob(gatew) left=$mob(left) right=$mob(right)"
+}
+
+proc make_fixed_list {n rom} {
+    set the_list {}
+    switch $rom {
+	short_rom {
+	    set min 2
+	    set max 5
+	}
+	medium_rom {
+	    set min 1
+	    set max 6
+	}
+	long_rom {
+	    set min 0
+	    set max 7
+	}
+    }
+    foreach j [iota [expr {$n/2}]] {
+	lappend the_list $min
+	lappend the_list $max
+    }
+    # puts $the_list
+    return $the_list
+}
+
+proc new_race {} {
+	global ob mob
+    	
+	if {$ob(running)} {
+		stop_race
+		.c delete track
+		if {$ob(hdir)} {
+			set img(field) [image create photo -format gif -file "racetrack_hriz.gif"]
+		} else {
+			set img(field) [image create photo -format gif -file "racetrack_vert.gif"]		
+		}
+  		set ob(field) [.c create image 0 0 -image $img(field) -tag track -anchor center]
+    	}
+
+	set ob(running) 1
+	.clock delete "all"
+	make_clock
+
+	# 4 possible random sequences
+	expr {srand(int(rand() * 4))}
+	if {$ob(drace,rom) != "random"} {
+		set ob(gate_list) [make_fixed_list [expr {$ob(nsets)*$ob(npos)}] $ob(drace,rom)]
+    	} else {
+		set ob(gate_list) [make_rand_list $ob(nsets) $ob(npos)]
+    	}
+
+    	# scrub args
+    	regsub -all {[^0-9]} $mob(endgame) {} mob(endgame)
+    	set ob(endgame) $mob(endgame)
+    	set ob(endgame) [bracket $ob(endgame) 0 10000]
+    
+    	regsub -all {[^0-9.]} $mob(level) {} mob(level)
+    	set ob(level) [bracket $mob(level) 1 10]
+    
+    	regsub -all {[^0-9.]} $mob(gatew) {} mob(gatew)
+    	set ob(gatew) $mob(gatew)
+    	set ob(gatew) [bracket $ob(gatew) .004 .2]
+	set ob(maxspacing) [expr {($ob(winwidth) - ($ob(side2) + $ob(gatew)))}]
+
+    	set ob(hdir) $mob(hdir)
+    	set ob(gates_deleted) 0
+
+	# fallms  = 5 ms (sampling period). So sampling frequency = 200 Hz
+    	set ob(fallms) 5
+	set ob(Hz) [expr {1000*(1.0/$ob(fallms))}]
+    
+    if {$ob(ankle)} {
+	if [info exists ob(drace,speed)] {
+	    switch $ob(drace,speed) {
+		slow_speed { 
+		    set ob(level) $ob(config,race,speed,slow)
+		}
+		medium_speed {
+		    set ob(level) $ob(config,race,speed,medium)
+		}
+		fast_speed {
+		    set ob(level) $ob(config,race,speed,fast)
+		}
+	    }
+	}
+	if [info exists ob(drace,stiff)] {
+	    switch $ob(drace,stiff) {
+		low_stiff { 
+		    wshm ankle_stiff $ob(config,race,stiff,low)
+		}
+		medium_stiff {
+		    wshm ankle_stiff $ob(config,race,stiff,medium)
+		}
+		high_stiff {
+		    wshm ankle_stiff $ob(config,race,stiff,high)
+		}
+	    }
+	}
+    	} else {
+		set ob(level) $mob(level)
+    	}
+
+    array set mob {
+	gates_created 0
+	score  0
+	thru 0
+	racrow  0
+	maxinrow  0
+	left 0
+	right 0
+	round 1
+    }
+    
+    make_racer
+
+    size_racer
+	
+    init_adap_controller
+
+    do_gate
+
+    fall
+
+    do_drag .c
+}
+
+proc do_drag {w} {
+	global ob
+
+	# hdir == 0 means the walls fall from the top
+	# hdir == 1 means the walls "fall" from the right
+	set x 0.0
+	set y 0.0
+	if {$ob(hdir) == 0} {
+	    set x [getptr x]
+	    set vel [rshm ankle_ie_vel]
+	    set torque [rshm ankle_ie_torque]
+	    if {$ob(ankle)} {
+		foreach {x y} [ankle_ptr_scale $x $y] break
+	    }
+	    dragx $w $x racer
+	    set cur_pos $x
+	} else {
+	    set y [getptr y]
+	    set vel [rshm ankle_dp_vel]
+	    set torque [rshm ankle_dp_torque]	
+	 	if {$ob(ankle)} {
+			foreach {x y} [ankle_ptr_scale $x $y] break
+	    	} 
+	    dragy $w $y racer
+	    set cur_pos $y
+	}
+
+	#P1
+	lappend ob(dx) [expr {abs($cur_pos-$ob(oldcen))}]
+	#P2
+	lappend ob(x) $cur_pos
+	#P3
+	lappend ob(speedtraj) $vel
+	#P4
+	lappend ob(torque) $torque
+
+	if {$ob(endgame) <= 0 || $ob(gates_deleted) <= $ob(endgame)} {
+		after 8 do_drag .c
+	}
+}
+
+proc dragx {w x what} {
+	global ob
+
+	set x1 [bracket $x -$ob(half,x) $ob(half,x)]
+	set x1 [expr {$x1 - $ob(racw2)}]
+	set x2 [expr {$x1 + $ob(racw)}]
+	# foreach {d1 y1 d2 y2} [.c coords $what] {break}
+	set y1 -.15
+	set y2 [expr {$y1 + $ob(rach)}]
+        .c coords $what $x1 $y1 $x2 $y2
+	.c scale $what 0 0 $ob(scale) -$ob(scale)
+}
+
+proc dragy {w y what} {
+	global ob
+
+	set y1 [bracket $y -$ob(half,y) $ob(half,y)]
+	set y1 [expr {$y1 - $ob(racw2)}]
+	set y2 [expr {$y1 + $ob(racw)}]
+	# foreach {d1 x1 d2 x2} [.c coords $what] {break}
+	set x1 -.15
+	set x2 [expr {$x1 + $ob(rach)}]
+        .c coords $what $x1 $y1 $x2 $y2
+	.c scale $what 0 0 $ob(scale) -$ob(scale)
+}
+
+# this gate was hit
+proc hit {} {
+	global ob mob
+
+	nbeep 1 A 200
+	.c itemconfig racer -fill red
+	after 500 .c itemconfig racer -fill yellow
+
+	incr mob(score) -20
+	incr ob(gates_deleted)
+	if {$mob(racrow) > $mob(maxinrow)} {
+		set mob(maxinrow) $mob(racrow)
+	}
+	set mob(racrow) 0
+	do_title
+	if {$ob(splattime)<=[expr {3*$ob(time_gate_travel)/4.0}]} {
+		incr ob(splattime) 25
+	}
+	if {$ob(gates_deleted) == $mob(endgame)} {
+		stop_race
+	}
+	updateClock
+	calculate_metrics
+	cancel_moveit_timeouts
+	wshm ankle_stiff 1
+	if {$ob(motorforces)} {
+		#calculate_moveit_parameters	
+		set dest $ob(cen)
+		after $ob(slottime_soft_mb) [list adap_moveit {0 $ob(slotticks) 1} $dest]
+		set ob(moveit_wait) [list adap_moveit {0 400 0} $dest]
+		set ob(moveit_state) pre_wait
+	}
+}
+
+proc hitanimal {} {
+	global ob
+
+	calculate_metrics
+	cancel_moveit_timeouts
+	wshm ankle_stiff 1
+	if {$ob(motorforces)} {
+		#calculate_moveit_parameters	
+		set dest $ob(cen)
+		after $ob(slottime_soft_mb) [list adap_moveit {0 $ob(slotticks) 1} $dest]
+		set ob(moveit_wait) [list adap_moveit {0 400 0} $dest]
+		set ob(moveit_state) pre_wait
+	}
+}	
+
+
+# this gate was passed rather than hit.
+proc thrugate {} {
+	global ob mob
+
+	incr mob(thru)
+	incr mob(score) 20
+	incr mob(racrow)
+	incr ob(gates_deleted)
+	do_title
+	if {$ob(gates_deleted) == $mob(endgame)} {
+		stop_race
+	}
+	if {$ob(splattime)>=[expr {1*$ob(time_gate_travel)/3.0}]} {
+		incr ob(splattime) -50
+	}
+    	nbeep 5 B 50
+	updateClock
+	calculate_metrics
+	wshm ankle_stiff 2
+	cancel_moveit_timeouts
+	if {$ob(motorforces)} {
+		#calculate_moveit_parameters	
+		set dest $ob(cen)
+		after $ob(slottime_soft_mb) [list adap_moveit {0 $ob(slotticks) 1} $dest]
+		set ob(moveit_wait) [list adap_moveit {0 400 0} $dest]
+		set ob(moveit_state) pre_wait
+	}
+}
+
+proc calculate_metrics {} {
+	global ob mob
+
+		### P1 ###
+ 		waitball $ob(dx)
+		set mikosP1 [llength $ob(P1)]
+		if {$mob(gates_created) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP1 % $ob(ntimes)]} {
+				set med [eval median $ob(P1)]
+				adjust_adap_param $med P1
+			}		
+		} elseif {$mob(gates_created) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP1) [eval track_adap_param {$ob(P1)}]
+		} else {
+			if {![expr $mikosP1 % $ob(ntimes)]} {
+				set med [eval median $ob(P1)]
+				challenge_adap_param $med P1
+			}		
+		}
+		set ob(dx) []
+
+		### --- ###
+		### P2 ###
+		mindist $ob(x)
+		set mikosP2 [llength $ob(P2)]
+		if {$mob(gates_created) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP2 % $ob(ntimes)]} {
+				set med [eval median $ob(P2)]
+				adjust_adap_param $med P2
+			}		
+		} elseif {$mob(gates_created) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP2) [eval track_adap_param {$ob(P2)}]
+		} else {
+			if {![expr $mikosP2 % $ob(ntimes)]} {
+				set med [eval median $ob(P2)]
+				challenge_adap_param $med P2
+			}		
+		}
+		set ob(x) []
+		### --- ###
+		### P3 ###
+		smoothcrit $ob(speedtraj)
+		set mikosP3 [llength $ob(P3)]
+		if {$mob(gates_created) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP3 % $ob(ntimes)]} {
+				set med [eval median $ob(P3)]
+				adjust_adap_param $med P3
+			}
+		} elseif {$mob(gates_created) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP3) [eval track_adap_param {$ob(P3)}]
+		} else {
+			if {![expr $mikosP3 % $ob(ntimes)]} {
+				set med [eval median $ob(P3)]
+				challenge_adap_param $med P3
+			}		
+		}
+		set ob(speedtraj) []
+		### --- ###
+		### P4 ###
+		estimate_torque $ob(torque)
+		set mikosP4 [llength $ob(P4)]
+		if {$mob(gates_created) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP4 % $ob(ntimes)] && $mikosP4>0} {
+				set med [eval median $ob(P4)]
+				adjust_adap_param $med P4
+			}		
+		} elseif {$mob(gates_created) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP4) [eval track_adap_param {$ob(P4)}]
+		} else {
+			if {![expr $mikosP4 % $ob(ntimes)]} {
+				set med [eval median $ob(P4)]
+				challenge_adap_param $med P4
+			}		
+		}
+		set ob(torque) []
+		### --- ###
+}
+
+proc adjust_adap_param {med metric} {
+	global ob
+
+if {!$ob(adaptive)} { return }
+	
+	switch $metric {
+	P1 {
+		puts "P1 med = $med"
+		if {$med <0.8} {
+			# the player did really bad --> decrease the speed of the ball
+			decrease_fall_speed
+		} elseif {$med >=0.8 && $med <1.7} {
+			# the player does ok; challenge the player! --> increase the speed of the ball
+			increase_fall_speed
+		} elseif {$med >=1.7} {
+			#the player does really good; challenge the player! --> increase the speed of the ball twice
+			# if it is not possible, increase it once.
+			# at the same time, increase stiffness a bit
+			increase_fall_speed
+			increase_fall_speed
+			increase_stiffness
+		}
+		calculate_moveit_parameters
+	}
+	P2 {
+		puts "P2 med = $med"
+		if {$med < 0.33} {
+			#the player did really bad --> increase the size of the paddle
+			increase_size_gate
+		} elseif {$med >=0.33 && $med < 0.6} {
+			#the player did ok --> decrease the size of the paddle a bit
+			decrease_size_gate
+		} elseif {$med > 0.6} {
+			#the player did really good --> idecrease the size of the paddle twice, if possible
+			decrease_size_gate
+			decrease_size_gate
+		}
+	}
+	P3 {
+		puts "P3 med = $med"
+		if {$med < 0.1} {
+			# the shooting was not smooth --> decrease waiting time for second movebox
+			if {$ob(kvlim_wait_dp)>1000} {
+				set ob(kvlim_wait_dp) [expr {$ob(kvlim_wait_dp)*0.85}]
+		 		puts "waiting time for hard movebox decreased by 15%, now it is $ob(kvlim_wait_dp) ms"
+			}
+		} elseif {$med >=0.1 && $med <0.2} {
+			# the shooting was almost smooth --> increase waiting time for second movebox
+			if {$ob(kvlim_wait_dp) <= 6000} {
+				set ob(kvlim_wait_dp) [expr {$ob(kvlim_wait_dp)*1.15}]
+		 		puts "waiting time for shooting movebox increased by 15%, now it is $ob(kvlim_wait_dp) ms"
+			}
+		} elseif {$med >=0.2} {
+			# the shooting was very smooth, the movebox does the job, the patient is sluggish --> increase waiting time to maximum
+				set ob(kvlim_wait_dp) 6000
+		 		puts "waiting time for shooting movebox increased to maximum, now it is $ob(kvlim_wait_dp) ms"
+		}
+	}
+	P4 {
+		puts "P4 med = $med"
+		if {$med>0.5} {
+			# the hard movebox does all the job --> decrease stiffness
+			decrease_stiffness
+		} else {
+			# stiffness seems ok, both patient and movebox are moving the ankle --> don't do anything
+		}
+	}
+	}
+}
+
+proc decrease_stiffness {} {
+	global ob
+	set cur [lindex $ob(lstiff) [expr {$ob(level_stiff)-1}]] 
+	set index [lsearch $ob(lstiff) $cur]
+	if {[expr {$index-1}]>=0} {
+		set ob(stiff) [lindex $ob(lstiff) [expr {$index-1}]]
+		incr ob(level_stiff) -1
+		puts "stiffness decreased; new stiffness is now $ob(stiff)"  
+	}
+}
+
+proc increase_stiffness {} {
+	global ob		
+	set cur [lindex $ob(lstiff) [expr {$ob(level_stiff)-1}]] 
+	set index [lsearch $ob(lstiff) $cur]
+	set mikos [llength $ob(lstiff)]
+	if {[expr {$index+1}]<$mikos} {
+		set ob(stiff) [lindex $ob(lstiff) [expr {$index+1}]]
+		incr ob(level_stiff) 1
+		puts "stiffness increased; new stiffness is now $ob(stiff)"  
+	}
+}
+
+proc decrease_fall_speed {} {
+	global ob
+	set cur [lindex $ob(lgspeed) [expr {$ob(level_gspeed)-1}]] 
+	set index [lsearch $ob(lgspeed) $cur]
+	#puts "cur = $cur index = $index"
+	if {[expr {$index-1}]>=0} {
+		set ob(gspeed) [lindex $ob(lgspeed) [expr {$index-1}]]
+		incr ob(level_gspeed) -1
+		puts "gate speed decreased; new gate speed is now $ob(gspeed)"  
+	}
+}
+
+proc increase_fall_speed {} {
+	global ob
+	set cur [lindex $ob(lgspeed) [expr {$ob(level_gspeed)-1}]] 
+	set index [lsearch $ob(lgspeed) $cur]
+	#puts "cur = $cur index = $index"
+	set mikos [llength $ob(lgspeed)]
+	if {[expr {$index+1}]<$mikos} {
+		set ob(gspeed) [lindex $ob(lgspeed) [expr {$index+1}]] 
+		incr ob(level_gspeed) 1
+		puts "gate speed increased; new gate speed is now $ob(gspeed)"  
+	}
+} 
+
+proc decrease_size_gate {} {
+	global ob
+	if {$ob(gatew) >=0.039} {
+		set ob(gatew) [expr {$ob(gatew)-0.004}]
+		puts "gate size decreased, width=$ob(gatew)"
+	} 
+}
+
+proc increase_size_gate {} {
+	global ob
+	if {$ob(gatew) <=0.095} {
+		set ob(gatew) [expr {$ob(gatew)+0.004}]
+		puts "gate size increased, width=$ob(gatew)"  
+	} 
+}
+
+
+proc hitsplat {} {
+	global ob mob
+
+	 nbeep 1 B 200
+	.c itemconfig racer -fill red
+	after 500 .c itemconfig racer -fill yellow
+
+	incr mob(score) -10
+	incr ob(splathit)
+	if {$ob(splattime)<=[expr {3*$ob(time_gate_travel)/4.0}]} { 
+		incr ob(splattime) 100
+	}
+	do_title
+}
+
+proc domenu {} {
+	global ob mob
+	set m [menu_init .menu]
+	menu_v $m endgame "Game Length" [expr {$ob(nsets) * $ob(npos)}]
+	menu_v $m gatew "Gate Width" .067
+	menu_v $m level "Level (1-10)" 5
+	menu_t $m b0 "" ""
+
+	menu_cb $m hdir "Horiz Motion"
+	menu_cb $m round "Oval Racer"
+	menu_t $m b1 "" ""
+
+	menu_t $m gates_created "Total Gates"
+	menu_t $m thru "Through Gates"
+	menu_t $m left "Hit Left"
+	menu_t $m right "Hit Right"
+	menu_t $m b2 "" ""
+	menu_t $m score Score
+	menu_t $m racrow "Current Streak"
+	menu_t $m maxinrow "Longest Streak"
+	menu_t $m b3 "" ""
+
+	menu_b $m newgame "New Game (n)" new_race
+	menu_b $m stopgame "Stop Game (s)" stop_race
+	menu_t $m hide "Hide Menu (m)" ""
+	menu_b $m quit "Quit (q)" {done}
+}
+
+proc done {} {
+        global ob
+	stop_race
+	stop_log
+	stop_rtl
+	exit
+}
+
+proc draw_animal {w num x y} {
+	global ob
+
+	set ob(pic,basedir) ../ku101
+	set ob(splatpic,basedir) ../splat2
+
+    	foreach d [glob -join $ob(pic,basedir) *] {
+		lappend uilist [file rootname [file tail $d]]
+    	}
+    	set uilist [lsort $uilist]
+
+    	set ilistlast [llength $uilist]
+    	incr ilistlast -1
+
+    	# shuffle sorted list
+    	set ilist [lrange [shuffle $uilist] 0 $ilistlast]
+
+    	set i [lindex $uilist [irand $ilistlast]]
+
+
+   	foreach f [glob -join $ob(splatpic,basedir) *] {
+		lappend uilist_splat [file rootname [file tail $f]]
+    	}
+    	set uilist_splat [lsort $uilist_splat]
+
+    	set ilistlast_splat [llength $uilist_splat]
+    	incr ilistlast_splat -1
+
+    	# shuffle sorted list
+    	set ilist [lrange [shuffle $uilist_splat] 0 $ilistlast_splat]
+
+    	set j [lindex $uilist_splat [irand $ilistlast_splat]]
+
+    	# set ob(scale) 1.0
+    	if {$ob(hdir) == 0} {
+		set x [expr {$x * $ob(scale)}]
+		set y [expr {$y * $ob(scale)-20}]
+    	} else {
+		set x [expr {$x * $ob(scale)+10}]
+		set y [expr {$y * $ob(scale)}]
+    	}
+    	set img($i,im) [image create photo -file [glob $ob(pic,basedir)/$i.gif]]
+    	set splat($j,im) [image create photo -file [glob $ob(splatpic,basedir)/$j.gif]]
+    	set img($i,id) [$w create image $x $y -image $img($i,im) \
+	-tag [list animal a$num falling] -anchor center]
+    	after $ob(splattime) [list .c create image $x $y -image $splat($j,im) \
+	-tag [list bad b$num falling] -anchor center]
+}
+
+init_race

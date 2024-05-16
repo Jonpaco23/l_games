@@ -1,0 +1,13 @@
+# imt log
+s logheadsize 000250
+s logcolumns 7
+s logname /home/testac/lgames/fitts/20210621_Mon/neelesh_test_111217_passive.dat
+s logversion 2.0
+s logdate "Mon Jun 21 11:12:17 EDT 2021"
+s logidate 1624288337
+
+# begin user data
+
+# end user data
+
+#####

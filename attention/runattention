@@ -1,0 +1,5 @@
+#LGAMES=$LGAMES_HOME
+
+cd ../attention
+# echo FittsTest: starting pick from $PWD
+wish attention.tcl

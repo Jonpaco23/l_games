@@ -1,0 +1,13 @@
+# imt log
+s logheadsize 000233
+s logcolumns 9
+s logname /home/testac/lgames/fitts/20180702_Mon/run1.143515.dat
+s logversion 2.0
+s logdate "Mon Jul 2 14:35:15 EDT 2018"
+s logidate 1530556515
+
+# begin user data
+
+# end user data
+
+#####

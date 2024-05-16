@@ -1,0 +1,13 @@
+# imt log
+s logheadsize 000186
+s logcolumns 3
+s logname xy.dat
+s logversion 1.0
+s logdate "Thu Jun 28 12:35:31 EDT 2018"
+s logidate 1530203731
+
+# begin user data
+
+# end user data
+
+#####

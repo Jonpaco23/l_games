@@ -1,0 +1,27 @@
+
+
+	proc smoothcrit {list} {
+	
+	set av [eval average $list]
+	puts "av = $av"
+	
+	set list2 [lsort -real $list]
+	set meg [lindex $list2 end]
+	puts "meg = $meg"
+	#set megisto [expr {max($list)}]
+	#proc max list {lindex [lsort -real $arr] end}
+	#puts "megisto = $max"
+	puts "list = $list2"
+	}
+
+	proc sum {args} {
+		set result 0
+		foreach n $args {
+			set result [expr $result+$n]
+		}
+		return $result
+	}
+
+	proc average {args} {
+		return [expr [eval sum $args] / [llength $args]]
+	}

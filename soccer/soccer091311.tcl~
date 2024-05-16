@@ -1,0 +1,984 @@
+# a game of 4 wall 4 paddle pong
+
+# you can choose 1-4 live sides.
+# live sides return the ball at random
+# other sides reflect.
+
+global ob
+
+package require BLT
+
+source ../common/util.tcl
+source ../common/menu.tcl
+source predict.tcl
+
+# make walls once.
+# position and color.
+# wall,first and wall,last help with stacking order.
+
+proc make_walls {} {
+	global ob
+
+	set winheight $ob(winheight)
+	set winwidth $ob(winwidth)
+	# wall width
+	set wwid 50
+	set ob(ww,n) $wwid
+	set ob(ww,s) [expr {$winheight-$wwid}]
+	set ob(ww,w) $wwid
+	set ob(ww,e) [expr {$winwidth-$wwid}]
+
+	set ob(ww,gp) 250
+	
+	# four walls
+
+	set ob(color,n) gray
+	set x1 0
+	set y1 0
+	set x2 [expr {($winwidth/2)-($ob(ww,gp)/2)}]
+	set y2 $ob(ww,n)
+	set ob(wall,nw) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,n) -tag [list wall wn]]
+
+	set x1 [expr {($winwidth/2)+($ob(ww,gp)/2)}]
+	set y1 0
+	set x2 $winwidth
+	set y2 $ob(ww,n)
+	set ob(wall,ne) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,n) -tag [list wall wn]]
+	
+	# north goalpost
+	set ob(colorgp,n) red
+	set x1 [expr {($winwidth/2) - ($ob(ww,gp)/2)}]
+	set y1 0
+	set x2 [expr {($winwidth/2) + ($ob(ww,gp)/2)}]
+	set y2 [expr {$ob(ww,n)}]
+	set ob(wallgp,n) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,n) -tag [list wall wngp]]
+
+	set ob(color,s) gray
+	set x1 0
+	set y1 $ob(ww,s)
+	set x2 [expr {($winwidth/2)-($ob(ww,gp)/2)}]
+	set y2 $winheight
+	set ob(wall,sw) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,s) -tag [list wall ws]]
+		
+	set x1 [expr {($winwidth/2)+($ob(ww,gp)/2)}]
+	set y1 $ob(ww,s)
+	set x2 $winwidth
+	set y2 $winheight
+	set ob(wall,se) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,s) -tag [list wall ws]]	
+
+	# south goalpost
+	set ob(colorgp,s) blue
+	set ob(gps,x1) [expr {($winwidth/2) - ($ob(ww,gp)/2)}]
+	set ob(gps,y1) $ob(ww,s)
+	set ob(gps,x2) [expr {($winwidth/2) + ($ob(ww,gp)/2)}]
+	set ob(gps,y2) $winheight
+	set ob(wallgp,s) [.c create rect $ob(gps,x1) $ob(gps,y1) $ob(gps,x2) $ob(gps,y2) -outline "" \
+		-fill $ob(color,s) -tag [list wall wsgp]]     	
+	
+	set ob(color,w) gray
+	set x1 0
+	set y1 0
+	set x2 $ob(ww,w)
+	set y2 $winheight
+	set ob(wall,w) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,w) -tag [list wall ww]]
+	
+	#west goalpost
+	set ob(colorgp,w) cyan
+	set x1 0
+	set y1 [expr {($winheight/2) - 100}]
+	set x2 [expr {$ob(ww,w)+5}]
+	set y2 [expr {($winheight/2) + 100}]
+	set ob(wallgp,w) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,w) -tag [list wall wwgp]]        
+	
+	set ob(color,e) gray
+	set x1 $ob(ww,e)
+	set y1 0
+	set x2 $winwidth
+	set y2 $winheight
+	set ob(wall,e) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,e) -tag [list wall we]]
+	
+	#east goalpost
+	set ob(colorgp,e) orange
+	set x1 [expr {$ob(ww,e)-5}]
+	set y1 [expr {($winheight/2) - 100}]
+	set x2 $winwidth
+	set y2 [expr {($winheight/2) + 100}]
+	set ob(wallgp,e) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,e) -tag [list wall wegp]]
+	
+	set ob(wall,first) $ob(wall,ne)
+	set ob(wall,last) $ob(wall,e)
+
+	foreach i {n s w e} {
+		set ob(livewall,$i) 0
+	}
+	
+	foreach i {n s w e} {
+		set ob(livewallgp,$i) 0
+	}
+}
+
+# in each game, set up the walls as live (colored) or no (gray)
+
+proc set_walls {} {
+	global ob mob
+
+	foreach i {ne nw se sw w e} {
+		if {[string first $i $mob(whichgame)] >= 0} { 
+		        set ob(livewall,$i) 0
+		        .c itemconfigure $ob(wall,$i) -fill $ob(color,$i)
+		} else {
+		        set ob(livewall,$i) 0
+		        .c itemconfigure $ob(wall,$i) -fill gray
+		}
+	}
+	
+	foreach i {n s w e} {
+		if {[string first $i $mob(whichgame)] >= 0} { 
+				set ob(livewallgp,$i) 1
+				.c itemconfigure $ob(wallgp,$i) -fill $ob(colorgp,$i)
+		} else {
+				set ob(livewallgp,$i) 0
+				.c delete $ob(wallgp,$i) -fill gray	
+		}
+	}
+	
+}
+
+# make paddles once.
+
+proc make_paddles {} {
+	global ob
+
+	set ob(pad,n) [.c create oval 1 1 2 2 -outline "" \
+		-fill $ob(colorgp,n) -tag [list paddle pn]]
+	set ob(pad,s) [.c create oval 1 1 2 2 -outline "" \
+		-fill $ob(colorgp,s) -tag [list paddle ps]]
+	set ob(pad,w) [.c create oval 1 1 2 2 -outline "" \
+		-fill $ob(colorgp,w) -tag [list paddle pw]]
+	set ob(pad,e) [.c create oval 1 1 2 2 -outline "" \
+		-fill $ob(colorgp,e) -tag [list paddle pe]]
+}
+
+# set up the paddles each game.
+# dead paddles get stuffed behind dead walls,
+# but they're still there.
+# (call me lazy)
+
+proc set_paddles {} {
+	global ob mob
+
+	set winheight $ob(winheight)
+	set wh5 [expr {$winheight - 5}]
+	set winwidth $ob(winwidth)
+	set ww5 [expr {$winwidth - 5}]
+	set cx $ob(cx)
+	set cy $ob(cy)
+
+	# distance from screen edge to paddle face
+	set pdist 100
+	set ob(wpd) $pdist
+	set ob(epd) [expr {$winwidth-$pdist}]
+	set ob(npd) $pdist
+	set ob(spd) [expr {$winheight-$pdist}]
+
+	# paddle dimensions
+	regsub -all {[^0-9]} $mob(padw) {} mob(padw)
+	set ob(padw) $mob(padw)
+	set ob(padw) [bracket $ob(padw) 5 500]
+	set ob(padh) 35
+
+	set ob(padw2) [expr {$ob(padw) / 2}]
+
+	# four paddles
+
+	# north
+	if {[string first n $mob(whichgame)] >= 0} {
+		set x1 [expr {$cx - $ob(padw2)}]
+		set y1 $ob(npd)
+		set x2 [expr {$cx + $ob(padw2)}]
+		set y2 [expr {$ob(npd) - $ob(padh)}]
+		.c coords $ob(pad,n) $x1 $y1 $x2 $y2 
+		.c itemconfigure $ob(pad,n) -fill $ob(colorgp,n)
+		#.c raise $ob(pad,n) $ob(wall,last)
+		#.c raise $ob(pad,n) $ob(gkarea2,n)
+		#.c raise $ob(pad,n) $ob(gkarea3,n)
+	} else {
+		.c coords $ob(pad,n) $cx 5 $cx 5
+		.c itemconfigure $ob(pad,n) -fill gray
+		.c lower $ob(pad,n) $ob(wall,first)
+	}
+
+	# south
+	if {[string first s $mob(whichgame)] >= 0} {
+		set x1 [expr {$cx - $ob(padw2)}]
+		set y1 $ob(spd)
+		set x2 [expr {$cx + $ob(padw2)}]
+		set y2 [expr {$ob(spd) + $ob(padh)}]
+		.c coords $ob(pad,s) $x1 $y1 $x2 $y2 
+		.c itemconfigure $ob(pad,s) -fill $ob(colorgp,s)
+		#.c raise $ob(pad,s) $ob(wall,last)
+		#.c raise $ob(pad,s) $ob(gkarea2,s)
+		#.c raise $ob(pad,s) $ob(gkarea3,s)
+	} else {
+		.c coords $ob(pad,s) $cx $wh5 $cx $wh5
+		.c itemconfigure $ob(pad,s) -fill gray
+		.c lower $ob(pad,s) $ob(wall,first)
+	}
+
+	# west
+	if {[string first w $mob(whichgame)] >= 0} {
+		set x1 $ob(wpd)
+		set y1 [expr {$cx - $ob(padw2)}]
+		set x2 [expr {$ob(wpd) - $ob(padh)}]
+		set y2 [expr {$cx + $ob(padw2)}]
+		.c coords $ob(pad,w) $x1 $y1 $x2 $y2 
+		.c itemconfigure $ob(pad,w) -fill $ob(colorgp,w)
+		.c raise $ob(pad,w) $ob(wall,last)
+	} else {
+		.c coords $ob(pad,w) 5 $cy 5 $cy
+		.c itemconfigure $ob(pad,w) -fill gray
+		.c lower $ob(pad,w) $ob(wall,first)
+	}
+
+	# east
+	if {[string first e $mob(whichgame)] >= 0} {
+		set x1 $ob(epd)
+		set y1 [expr {$cx - $ob(padw2)}]
+		set x2 [expr {$ob(epd) + $ob(padh)}]
+		set y2 [expr {$cx + $ob(padw2)}]
+		.c coords $ob(pad,e) $x1 $y1 $x2 $y2 
+		.c itemconfigure $ob(pad,e) -fill $ob(colorgp,e)
+		.c raise $ob(pad,e) $ob(wall,last)
+	} else {
+		.c coords $ob(pad,e) $ww5 $cy $ww5 $cy
+		.c itemconfigure $ob(pad,e) -fill gray
+		.c lower $ob(pad,e) $ob(wall,first)
+	}	
+}
+
+proc set_lines {} {
+	
+	global ob
+
+	set ob(line) [.c create line $ob(ww,w) [expr {$ob(winheight)/2}] $ob(ww,e) [expr {$ob(winheight)/2}] -width 2 -fill grey]
+	set circleR 35	
+	set ob(circle) [.c create oval [expr {$ob(winwidth)/2-$circleR}] [expr {$ob(winheight)/2 - $circleR}] [expr {$ob(winwidth)/2+$circleR}] [expr {$ob(winheight)/2 + $circleR}] -width 2 -outline grey]
+	set ob(gkarea1,s) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2+4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  [expr {$ob(winheight)/2+4*$circleR}] -width 2 -fill grey]
+	set ob(gkarea1,n) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2-4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  [expr {$ob(winheight)/2-4*$circleR}] -width 2 -fill grey]
+	set ob(gkarea2,s) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2+4*$circleR}] [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}]  $ob(ww,s) -width 2 -fill grey]
+	set ob(gkarea3,s) [.c create line [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2+4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  $ob(ww,s) -width 2 -fill grey]
+	set ob(gkarea2,n) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2-4*$circleR}] [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}]  $ob(ww,n) -width 2 -fill grey]
+	set ob(gkarea3,n) [.c create line [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2-4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  $ob(ww,n) -width 2 -fill grey]
+}
+
+# this gets done once.
+
+proc init_pong {} {
+	global ob
+
+	set ob(pic,basedir) ../soccer_img
+
+	# tick - 20 means every 20 ms, or 50/sec.
+	# smaller number means smoother motion, and more work for machine.
+	# tick is factored into the ball speed.
+	set ob(tick) 16
+	
+	set ob(winwidth) 450 
+	set ob(winheight) 650
+	
+	# centers
+	set ob(cx) [expr {$ob(winwidth) / 2}]
+	set ob(cy) [expr {$ob(winheight) / 2}]
+	set cx $ob(cx)
+	set cy $ob(cy)
+
+	canvas .c -width $ob(winwidth) -height $ob(winheight) -bg "dark green"
+	grid .c
+
+	wm geometry . +50+50
+
+	domenu
+
+	make_walls
+	
+	set_walls
+
+	set_lines
+
+	make_paddles
+
+	set_paddles
+
+
+	set ob(sdefended) 0
+	set ob(ndefended) 0
+	set ob(attack) 0
+
+	set ob(throwball) 0
+
+	set ob(bsize) 20
+	set ob(bsize2) [expr {$ob(bsize)/2}]
+	set ob(bradius) [expr {$ob(bsize)/2}]
+	
+	# the ball (after field!)
+	set bsize $ob(bsize)
+	set x1 [expr {$cx - ($bsize / 2)}]
+	set x2 [expr {$cx + ($bsize / 2)}]
+	set y1 [expr {$cy - ($bsize / 2)}]
+	set y2 [expr {$cy + ($bsize / 2)}]
+	set ob(ball) [.c create oval $x1 $y1 $x2 $y2 -fill white -outline black -width 3 -tag ball]
+	#set img(ball) [image create photo img -format gif -file "ball.gif"]
+  	#set ob(ball) [.c create image $cx $cy -image $img(ball) -tag ball -anchor center]
+	set ob(ballorig) [.c coords $ob(ball)]
+	
+	#raise_ball
+
+	bind .c <Motion> {dodrag %W %x %y}
+	bind . <s> stop_pong
+	bind . <n> new_pong
+	bind . <q> {exit}
+
+	set ob(lastbat) none
+	
+	# for moving the goalkeeper
+	set ob(goal) 0 
+	set ob(moveback) 0
+	set ob(moveback_v) 0
+	
+	# added by Kostas - lists for virtual rotation of the wall
+	set ob(wlist,s) [list n s w e]
+	set ob(wlist,w) [list e w n s]	
+	set ob(wlist,n) [list s n w e]
+	set ob(wlist,e) [list w e n s]
+	
+	if {[regexp ^(Linux|Unix|QNX) [tclos]]} {
+		.c config -cursor {crosshair gray}
+	}
+}
+
+proc stop_pong {} {
+	global mob
+
+	after cancel moveball
+	if {$mob(padrow) > $mob(maxinrow)} {
+		set mob(maxinrow) $mob(padrow)
+	}
+}
+
+# restart each new game
+
+proc new_pong {} {
+	global ob mob
+
+	stop_pong
+	.c delete pred
+	
+	regsub -all {[^0-9]} $mob(endgame) {} mob(endgame)
+	set ob(endgame) $mob(endgame)
+	regsub -all {[^0-9]} $mob(level) {} mob(level)
+	set ob(level) $mob(level)
+
+	eval .c coords $ob(ball) $ob(ballorig)
+	set ob(lastbat) none
+
+	array set mob {
+		bounces 0
+		score  0
+		padrow  0
+		maxinrow  0
+		wall 0
+		paddle 0
+	}
+		
+	set ob(sdefended) 0
+	set ob(ndefended) 0
+	set_walls
+
+	#set_paddles
+
+	# if the speed is bigger than the walls, then we have trouble,
+	# because the ball has to hit the walls to stay in bounds!
+
+	set ob(level) [bracket $ob(level) 1 100]
+	set ob(forw)  [expr {$ob(level) * 2.0 * $ob(tick) / 10.0 }]
+	set ob(side)  [expr {$ob(level) * 4.0 * $ob(tick) / 10.0 }]
+	#set ob(side2) [expr {($ob(side) / 2.0 )}]
+
+	startball
+	moveball
+}
+
+proc startball {} {
+	global ob
+# where does the ball start?  use this order.
+	set ob(forw) 2
+	if {$ob(livewallgp,s)} {
+		set ob(dir)   [list 0.0 [expr {1.0 + ($ob(forw)} / 5.0)]]
+	} elseif {$ob(livewallgp,n)} {
+		set ob(dir)   [list 0.0 [expr {1.0 + ($ob(forw)} / -5.0)]]
+	} elseif {$ob(livewallgp,w)} {
+		set ob(dir)   [list [expr {1.0 + ($ob(forw)} / -5.0)] 0.0]
+	} elseif {$ob(livewallgp,e)} {
+		set ob(dir)   [list [expr {1.0 + ($ob(forw)} / 5.0)] 0.0]
+	} else {
+		error "no live walls"
+	}
+	set_paddles
+
+	#raise_ball
+}
+
+
+proc raise_ball {} {
+# This is not used right now...
+	global ob
+	
+	.c raise $ob(ball) $ob(line)
+	.c raise $ob(ball)  $ob(circle)	
+	.c raise $ob(ball)  $ob(gkarea1,n)	
+	.c raise $ob(ball)  $ob(gkarea2,n)	
+	.c raise $ob(ball)  $ob(gkarea3,n)	
+	.c raise $ob(ball)  $ob(gkarea1,s)	
+	.c raise $ob(ball)  $ob(gkarea2,s)	
+	.c raise $ob(ball)  $ob(gkarea3,s)	
+}
+
+proc movegoalkeeper {} {
+	global ob
+
+	set ob(gkspeed) 0.5
+
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+	
+	set origx [expr {$origx - $ob(winwidth)/2 + $ob(padw)/2}]
+	
+	if {[expr {$ob(goalx)-$origx}]<-1} {
+		if {$origx > $ob(goalx)} {
+			eval .c move pn "-$ob(gkspeed) 0"
+			}
+		} elseif {[expr {$ob(goalx)-$origx}]>0} {
+			if {$origx < [expr {$ob(goalx)+$ob(padw)/2}]} {
+			eval .c move pn "$ob(gkspeed) 0"
+		}
+	}
+}
+
+
+proc movegoalkeeperback {} {
+	global ob
+
+	set ob(gkspeed) 1
+	set ob(goal) 0
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+
+	if {$origx <  [expr {$ob(winwidth)/2 - $ob(padw)/2-1}]} {
+		eval .c move pn "$ob(gkspeed) 0"
+		eval .c move ball "$ob(gkspeed) 0"
+	} elseif {$origx > [expr {$ob(winwidth)/2 - $ob(padw)/2+1}]} {
+		eval .c move pn "-$ob(gkspeed) 0"
+		eval .c move ball "-$ob(gkspeed) 0"
+	} else {
+		# goalkeeper is centered
+		set ob(moveback) 0
+		set ob(attack) 1 
+	}
+}
+
+proc movegoalkeeperback_v {} {
+	global ob
+
+	set ob(sp_back) [expr {0-$ob(sp_fwd)}]
+	set ob(goal) 0
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+
+	if {$origy >=  [expr {$ob(ww,n) +20}]} {
+		eval .c move pn "0 -2"
+	} else {
+		# goalkeeper is centered
+		set ob(moveback_v) 0
+		set ob(ndefended) 0 
+	}
+}
+
+proc start_attack {} {
+	global ob
+	
+	set ob(sp_fwd) 1
+
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+
+	if {[expr {$origy+20}] <= $ob(winheight)/2} {
+		eval .c move pn "0 $ob(sp_fwd)"
+		eval .c move ball "0 $ob(sp_fwd)"
+	} else {
+		throwit n
+		set ob(moveback_v) 1
+	}
+}
+
+proc dodrag {w x y} {
+	global ob
+	
+	scan [.c coords $ob(pad,s)] "%s %s" origx origy
+	
+	if {$ob(livewallgp,s)} {
+		if {!$ob(throwball)} { 
+			dragx $w $x ps
+		} else {
+			if { [expr {$ob(gps,y1) -$origy}]>=60} {			
+				dragy $w $y ps
+			} else {
+				set ob(throwball) 1
+				dragx $w $x ps
+			} 
+		}
+	}
+}
+
+proc dodragball {w x y} {
+	global ob
+	scan [.c coords $ob(pad,s)] "%s %s" origx origy
+
+	if {$ob(livewallgp,s)} {
+		if { [expr {abs($origx - $ob(winwidth)/2)}]<20} {
+			dragy $w $y ps
+			dragyball $w $y ball
+			if {$origy <= $ob(winheight)/2} {
+				throwit s
+				set ob(throwball) 1
+			}
+		} else { 
+			dragx $w $x ps
+			dragxball $w $x ball
+		}
+	}
+}
+
+proc dragx {w x p} {
+	global ob
+
+	set x1 [expr {[.c canvasx $x] - $ob(padw2)}]
+	set x2 [expr {$x1 + $ob(padw)}]
+	foreach {d1 y1 d2 y2} [.c coords $p] {break}
+
+	.c coords $p $x1 $y1 $x2 [expr {$y1+35}]
+
+}
+
+proc dragy {w y p} {
+	global ob
+
+	set y1 [expr {[.c canvasy $y] - $ob(padw2)}]
+	set y2 [expr {$y1 + $ob(padw)}]
+	foreach {x1 d1 x2 d2} [.c coords $p] {break}
+
+	.c coords $p $x1 $y1 $x2 $y2
+
+}
+
+proc dragxball {w x p} {
+	global ob
+
+	set x1 [expr {[.c canvasx $x]-$ob(bsize)/2}]
+	set x2 [expr {$x1 + $ob(bsize)}]
+	foreach {d1 y1 d2 y2} [.c coords $p] {break}
+	.c coords $p $x1 $y1 $x2 $y2
+
+# puts "dragx $p $cl"
+}
+
+proc dragyball {w y p} {
+	global ob
+
+	set y1 [expr {[.c canvasy $y] - $ob(bsize)}]
+	set y2 [expr {$y1 + $ob(bsize)}]
+	foreach {x1 d1 x2 d2} [.c coords $p] {break}
+	.c coords $p $x1 $y1 $x2 $y2
+
+# puts "dragy $p $cl"
+}
+
+# shake the walls.
+
+proc shake {obj} {
+	global ob
+
+	eval .c move $obj 0 10
+	
+	after 50 [list eval .c move $obj 10 0 ]
+
+	after 100 [list eval .c move $obj 0 -20 ]
+	after 150 [list eval .c move $obj -20 0 ]
+
+	after 200 [list eval .c move $obj 0 10 ]
+	after 250 [list eval .c move $obj 10 0 ]
+}
+
+# did the ball fall off the table?
+# this shouldn't happen at reasonable speeds,
+# but it's safe to check.
+
+# note: there are still ball off table problems at very high speed.
+
+proc ballofftable {bbox} {
+	global ob
+
+	foreach {x1 y1 x2 y2} $bbox {break}
+	if {
+	($x1 < 0) ||
+	($x2 > $ob(winwidth)) ||
+	($y1 < 0) ||
+	($y2 > $ob(winheight)) } {
+		# bell
+		puts "ball off table, bbox $bbox dir $ob(dir)"
+
+		# throw the ball to the center of the table,
+		# and send it back at half speed.
+		foreach {x y} $ob(dir) {break}
+		set bsize $ob(bsize)
+		set cx $ob(cx)
+		set cy $ob(cy)
+		set bsize $ob(bsize)
+		set x1 [expr {$cx - ($bsize / 2)}]
+		set x2 [expr {$cx + ($bsize / 2)}]
+		set y1 [expr {$cy - ($bsize / 2)}]
+		set y2 [expr {$cy + ($bsize / 2)}]
+		.c coords ball $x1 $y1 $x2 $y2
+		# slow it down, send it backwards
+		set x [expr $x / -2.0]
+		set y [expr $y / -2.0]
+		set ob(dir) "$x $y"
+		startball
+	}
+}
+
+# the main loop
+# note that "find overlapping" returns the objects in display list
+# stacking order.  the objects were created in this order: {walls
+# paddles field ball} so that if the ball overlaps both paddle and
+# field, it will find paddle.
+
+# in the switch, walls may be either live (colored) or not (gray).
+# gray walls reflect, and do not change scores.
+
+proc moveball {} {
+	global ob mob
+
+	if {!$ob(ndefended) && !$ob(sdefended)} {
+#puts "movebal: $ob(dir)"
+		eval .c move ball $ob(dir)
+		set mob(balldir) $ob(dir)
+	}
+
+	# see if the ball has hit anything - paddle or wall.
+	set bbox [.c bbox ball]
+    	set ob(bbox) $bbox
+	#puts [format "bbox = %s" $bbox]
+
+	ballofftable $bbox
+
+	set ob(bat) [lindex [eval .c find overlapping $bbox] 0]
+
+	# lastbat hack prevents wobbles
+	if {$ob(bat) != $ob(ball)
+		&& $ob(bat) != $ob(lastbat)
+		&& $ob(bat) != $ob(line)
+		&& $ob(bat) != $ob(circle)
+		&& $ob(bat) != $ob(gkarea1,s)	
+		&& $ob(bat) != $ob(gkarea2,s)	
+		&& $ob(bat) != $ob(gkarea3,s)	
+		&& $ob(bat) != $ob(gkarea1,n)	
+		&& $ob(bat) != $ob(gkarea2,n)	
+		&& $ob(bat) != $ob(gkarea3,n)	
+		} {
+		# set new ball velocity
+		# forw is directional, (must be negated in switch)
+		# side is not
+		#set forw [expr {1.0 + (($ob(forw) + [irand $ob(forw)])/10.0)}]
+		#set side [expr {(0.0 - $ob(side2) + [irand $ob(side)])/10.0}]
+
+		set forw [expr {1.0 + (($ob(forw) + [irand $ob(forw)])/50.0)}]
+		set side [expr {(0.0 - $ob(side) + [irand $ob(side)])/50.0}]
+		
+		foreach {oxr oyr} $ob(dir) {break}
+
+		switch $ob(bat) $ob(pad,n) {
+# puts "hit pn"
+		        set xr $side
+		        set yr $forw
+		        hitpaddle_n
+		} $ob(pad,s) {
+# puts "hit ps"
+		        set xr $side
+		        set yr [expr {0 - $forw}]
+		        hitpaddle_s        
+		} $ob(pad,w) {
+# puts "hit pw"
+		        set xr $forw
+		        set yr $side
+		        hitpaddle
+		} $ob(pad,e) {
+# puts "hit pe"
+		        set xr [expr {0 - $forw}]
+		        set yr $side
+		        hitpaddle
+		} $ob(wall,ne) {
+# puts "hit wn"
+		        if {$ob(livewall,n)} {
+		                set xr $side
+		                set yr $forw
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+		        }
+		} $ob(wall,nw) {
+# puts "hit wn"
+		        if {$ob(livewall,n)} {
+		                set xr $side
+		                set yr $forw
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+		        }
+			}	$ob(wall,se) {
+# puts "hit ws"
+		        if {$ob(livewall,s)} {
+		                set xr $side
+		                set yr [expr {0 - $forw}]
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+				defend $ob(bbox) $xr $yr s
+		        }
+			}	$ob(wall,sw) {
+# puts "hit ws"
+		        if {$ob(livewall,s)} {
+		                set xr $side
+		                set yr [expr {0 - $forw}]
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+				defend $ob(bbox) $xr $yr s
+		        }
+		} $ob(wall,w) {
+# puts "hit ww"
+		        if {$ob(livewall,w)} {
+		                set xr $forw
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wall,e) {
+# puts "hit we"
+		        if {$ob(livewall,e)} {
+		                set xr [expr {0 - $forw}]
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wallgp,n) {
+# puts "hit wn"
+		        if {$ob(livewallgp,n)} {
+						#set xr $side
+		                #set yr $forw
+		                set xr [expr {$side/10.}]
+						set yr [expr {-$forw/10.}]
+						hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+		        }
+		} $ob(wallgp,s) {
+# puts "hit ww"
+		        if {$ob(livewallgp,s)} {
+		                # set xr $side
+		                # set yr [expr {0 - $forw}]
+						set xr [expr {$side/10.}]
+						set yr [expr {($forw)/10.}]
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wall,w) {
+# puts "hit we"
+		        if {$ob(livewallgp,w)} {
+		                set xr $forw
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wall,e) {
+# puts "hit we"
+		        if {$ob(livewallgp,e)} {
+		                set xr [expr {0 - $forw}]
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        }
+		} default {
+error "woops! switch default should not get here, bat = $ob(bat)"
+		}
+		
+		# set new direction.
+		set ob(dir) "$xr $yr"                
+	        #puts [format "x = %f is and y = %f" $xr $yr]
+		     
+	
+# puts "$forw $side ; $ob(dir)"
+		set ob(lastbat) $ob(bat)
+		}
+	# end of ball hits thing, schedule a new
+	
+	if {$ob(endgame) <= 0 || $mob(bounces) < $ob(endgame)} {
+		set ob(after) [after $ob(tick) moveball]
+		# update idletasks
+	}
+	if {!$ob(sdefended)} {
+	# ball moves towards south wall, but not yet defended from the goalkeeper
+		bind .c <Motion> {dodrag %W %x %y}
+		#bind .c <1> {throwit s}
+	} else { 
+		bind .c <Motion> {dodragball %W %x %y}		
+	} 
+	
+	if {$ob(ndefended)} { 
+		if {$ob(moveback)} {
+			movegoalkeeperback
+		} 
+		if {$ob(attack)} {
+			start_attack
+		} 
+	}
+		if {$ob(moveback_v)} {
+			movegoalkeeperback_v
+		}
+
+		if {$ob(goal)} {
+			movegoalkeeper
+		}
+}
+
+# oops, the ball hit a live wall.
+
+proc hitwall {} {
+	global ob mob
+	
+	.c delete pred
+	incr mob(bounces)
+	incr mob(score) -30
+	incr mob(wall)
+	if {$mob(padrow) > $mob(maxinrow)} {
+		set mob(maxinrow) $mob(padrow)
+	}
+	set mob(padrow) 0
+	
+}
+
+# yay, the ball hit a paddle
+
+proc hitpaddle_s {} {
+	global ob mob
+	
+	.c delete pred
+	incr mob(bounces)
+	incr mob(paddle)
+	incr mob(score) 10
+	incr mob(padrow)
+	set ob(sdefended) 1
+}
+
+
+proc hitpaddle_n {} {
+	global ob
+	
+	.c delete pred
+
+	set ob(sdefended) 0
+	set ob(ndefended) 1
+
+	set ob(moveback) 1
+}
+
+proc throwit {i} {
+	global ob mob
+
+	set forw [expr {($ob(forw) + [irand 1])/10}]
+	set side [expr {(0.0 - $ob(side) + [irand $ob(side)])/10.0}]
+
+	if {$i =="s"} {
+		set ob(sdefended) 0
+		set xr -0.95
+		set yr [expr {-abs($xr)*4}]
+		defend $ob(bbox) $xr $yr $i
+	} elseif {$i == "n"} {
+		set ob(ndefended) 0
+		set xr -0.55
+		set yr [expr {abs($xr)*8}]
+		set ob(moveback_v) 1
+	}
+
+	set ob(dir) "$xr $yr" 
+}		
+
+proc defend {bbox xr yr i} {
+	global ob
+	predict2 $bbox $xr $yr $i
+}
+	
+# set up the menu (once)
+
+proc domenu {} {
+	set m [menu_init .menu]
+	menu_v $m whichgame "Game Type (nswe)" ns
+	menu_v $m endgame "Game Length" 100
+	menu_v $m padw "Paddle Width" 50
+	menu_v $m level "Level (1-100)" 8
+	menu_t $m blank "" ""
+
+	menu_t $m bounces Bounces
+	menu_t $m score Score
+	menu_t $m padrow "Current Streak"
+	menu_t $m maxinrow "Longest Streak"
+	menu_t $m wall "Wall Hits"
+	menu_t $m paddle "Paddle Hits"
+	menu_t $m blank2 "" ""
+
+	menu_t $m balldir "Ball Direction" ""
+	menu_b $m newgame "New Game (n)" new_pong
+	menu_b $m stopgame "Stop Game (s)" stop_pong
+	menu_b $m quit "Quit (q)" {exit}
+}
+
+init_pong

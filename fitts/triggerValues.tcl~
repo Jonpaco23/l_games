@@ -1,0 +1,71 @@
+#! /usr/bin/wish
+#
+# Tk GUI library
+package require Tk
+
+
+set command [exec python TriggerTests.py 0]
+puts $command
+#puts "Trigger 1 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 1]
+puts $command
+#puts "Trigger 3 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 2]
+puts $command
+#puts "Trigger 5 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 3]
+puts $command
+#puts "Trigger 7 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 4]
+puts $command
+#puts "Trigger 9 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 5]
+puts $command
+#puts "Trigger 11 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 6]
+puts $command
+#puts "Trigger 13 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 7]
+puts $command
+#puts "Trigger 15 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 8]
+puts $command
+#puts "Trigger 17 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 9]
+puts $command
+#puts "Trigger 15 sent!"
+
+after 2000 
+
+set command [exec python TriggerTests.py 10]
+puts $command
+#puts "Trigger 17 sent!"
+
+exit

@@ -1,0 +1,13 @@
+# imt log
+s logheadsize 000243
+s logcolumns 7
+s logname /home/testac/lgames/fitts/20191125_Mon/Player_121252_active.dat
+s logversion 2.0
+s logdate "Mon Nov 25 12:12:52 EST 2019"
+s logidate 1574701972
+
+# begin user data
+
+# end user data
+
+#####

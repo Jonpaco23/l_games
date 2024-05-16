@@ -1,0 +1,5 @@
+#LGAMES=$LGAMES_HOME
+
+cd ../fitts
+# echo FittsTest: starting pick from $PWD
+wish fitts.tcl

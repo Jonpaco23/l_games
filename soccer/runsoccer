@@ -1,0 +1,6 @@
+#LGAMES=$LGAMES_HOME
+
+#cd $LGAMES/race
+cd ../soccer
+# echo runrace: starting pick from $PWD
+wish soccer.tcl

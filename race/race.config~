@@ -1,0 +1,8 @@
+# race.tcl config options
+ 
+set ob(config,race,speed,fast) 10
+set ob(config,race,speed,medium) 6
+set ob(config,race,speed,slow) 4
+set ob(config,race,stiff,high) 10
+set ob(config,race,stiff,medium) 6
+set ob(config,race,stiff,low) 4

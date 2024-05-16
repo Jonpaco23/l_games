@@ -1,0 +1,1958 @@
+# a game of soccer with 2 goalkeepers
+# sides reflect the ball.
+# partida di calcio = soccer game
+# Konstantinos Michmizos, Fall 2011
+# konmic@mit.edu
+#
+# for creating an ascii file: 
+# wish ta.tcl / home / imt / therapist / Poli / eval / 20111125_Fri / pong_log_123907multi.dat > / home / imt / therapist / Poli / eval / 20111125_Fri /run.asc
+# for plotting:
+# ./gplot /home/imt/therapist/Konstantinos/eval/20111126_Sat/pong_log_123907multi.dat 1 18 1 19
+
+global ob
+
+package require BLT
+
+source ../common/util.tcl
+source ../common/menu.tcl
+source predict.tcl
+source math.tcl
+source myclock.tcl
+
+set ob(crobhome) $::env(CROB_HOME)
+source $ob(crobhome)/shm.tcl
+
+set ob(i18n_home) $::env(I18N_HOME)
+source $ob(i18n_home)/i18n.tcl
+
+# this game only works with anklebot
+localize_robot
+
+set ob(scale) 1000.0
+
+proc make_walls {} {
+	global ob
+
+	set winheight $ob(winheight)
+	set winwidth $ob(winwidth)
+	# wall width
+	set wwid 50
+	set ob(ww,n) $wwid
+	set ob(ww,s) [expr {$winheight-$wwid}]
+	set ob(ww,w) $wwid
+	set ob(ww,e) [expr {$winwidth-$wwid}]
+
+	set ob(ww,gp) 280
+	
+	set img(ar_right) [image create photo -format gif -file "images/arena_right_whiteline.gif"]
+	set img(ar_left) [image create photo -format gif -file "images/arena_left_whiteline.gif"]
+	set img(ar_nw) [image create photo -format gif -file "images/nw.gif"]
+	set img(ar_sw) [image create photo -format gif -file "images/sw.gif"]
+	set img(ar_ne) [image create photo -format gif -file "images/ne.gif"]
+	set img(ar_se) [image create photo -format gif -file "images/se.gif"]
+
+	# four walls
+	set ob(color,n) black
+	set ob(wall,nw) [.c create image 0 0 -image $img(ar_nw) -tag arena -anchor nw]	
+	set ob(wall,ne) [.c create image [expr {$winwidth-85}] 0 -image $img(ar_ne) -tag arena -anchor nw]	
+
+	# north goalpost
+	set x1 [expr {($winwidth/2) - ($ob(ww,gp)/2)}]
+	set y1 0
+	set x2 [expr {($winwidth/2) + ($ob(ww,gp)/2)}]
+	set y2 [expr {$ob(ww,n)}]
+	set ob(wallgp,n) [.c create rect $x1 $y1 $x2 $y2 -outline "" \
+		-fill $ob(color,n) -tag [list wall wngp]]
+
+	set ob(color,s) gray
+	set ob(wall,sw) [.c create image 0 $winheight -image $img(ar_sw) -tag arena -anchor sw]		
+	set ob(wall,se) [.c create image [expr {$winwidth-85}] [expr {$winheight-50}] -image $img(ar_se) -tag arena -anchor nw]
+
+	# south goalpost
+	set ob(gps,x1) [expr {($winwidth/2) - ($ob(ww,gp)/2)}]
+	set ob(gps,y1) $ob(ww,s)
+	set ob(gps,x2) [expr {($winwidth/2) + ($ob(ww,gp)/2)}]
+	set ob(gps,y2) $winheight
+	set ob(wallgp,s) [.c create rect $ob(gps,x1) $ob(gps,y1) $ob(gps,x2) $ob(gps,y2) -outline "" \
+		-fill $ob(color,s) -tag [list wall wsgp]]     	
+	
+	set ob(color,w) gray	
+
+	#west goalpost
+	set ob(colorgp,w) cyan
+	
+	set ob(color,e) gray
+	set ob(wall,e) [.c create image $winwidth $winheight -image $img(ar_right) -tag arena -anchor se]	
+
+	# for east goalpost
+	set ob(colorgp,e) orange
+	
+	set ob(wall,w) [.c create image 0 0 -image $img(ar_left) -tag arena -anchor nw]
+
+	set ob(wall,first) $ob(wall,ne)
+	set ob(wall,last) $ob(wall,e)
+
+	foreach i {n s w e} {
+		set ob(livewall,$i) 0
+		set ob(livewallgp,$i) 0
+	}
+}
+
+# in each game, set up the walls as live (colored) or no (gray)
+proc set_walls {} {
+	global ob mob
+
+	foreach i {ne nw se sw w e} {
+		if {[string first $i $mob(whichgame)] >= 0} { 
+		        set ob(livewall,$i) 0
+		        .c itemconfigure $ob(wall,$i) -fill $ob(color,$i)
+		} else {
+		        set ob(livewall,$i) 0
+		        #.c itemconfigure $ob(wall,$i) -fill gray
+		}
+	}
+	
+	foreach i {n s w e} {
+		if {[string first $i $mob(whichgame)] >= 0} { 
+				set ob(livewallgp,$i) 1
+				.c itemconfigure $ob(wallgp,$i) -fill $ob(colorgp,$i)
+		} else {
+				set ob(livewallgp,$i) 0
+				#.c delete $ob(wallgp,$i) -fill gray	
+		}
+	}
+}
+
+# make paddles once
+proc make_paddles {} {
+	global ob mob
+
+	# paddle dimensions
+	regsub -all {[^0-9]} $mob(padw) {} mob(padw)
+	set ob(padw) $mob(padw)
+	set ob(padw) [bracket $ob(padw) 5 500]
+	wshm ankle_games_paddle_size $ob(padw)
+
+	# height of the paddles
+	set ob(padh) 35
+
+	# distance from screen edge to paddle face
+	set pdist 100
+	set ob(npd) $pdist
+	set ob(spd) [expr {$ob(winheight)-$pdist}]
+
+	set ob(pad,n) [.c create oval 1 1 2 2 -outline "grey" \
+		-fill $ob(colorgp,n) -tag [list paddle pn]]
+	set ob(pad,s) [.c create oval 1 1 2 2 -outline "grey" \
+		-fill $ob(colorgp,s) -tag [list paddle ps]]
+	set ob(pad,w) [.c create oval 1 1 2 2 -outline "grey" \
+		-fill $ob(colorgp,w) -tag [list paddle pw]]
+	set ob(pad,e) [.c create oval 1 1 2 2 -outline "grey" \
+		-fill $ob(colorgp,e) -tag [list paddle pe]]
+}
+
+# set up the paddles each game.
+# dead paddles get stuffed behind dead walls,
+# but they're still there.
+# (call Andy lazy)
+proc set_paddles {} {
+	global ob mob
+
+	set cx $ob(cx)
+	set cy $ob(cy)
+
+
+	set ob(padw2) [expr {$ob(padw) / 2}]
+
+	# goalkeepers
+	# north
+	if {[string first n $mob(whichgame)] >= 0} {
+		set x1 [expr {$cx - $ob(padw2)}]
+		set y1 $ob(npd)
+		set x2 [expr {$cx + $ob(padw2)}]
+		set y2 [expr {$ob(npd) - $ob(padh)}]
+		.c coords $ob(pad,n) $x1 $y1 $x2 $y2 
+		.c itemconfigure $ob(pad,n) -fill $ob(colorgp,n)
+	} 
+	# south
+	if {[string first s $mob(whichgame)] >= 0} {
+		set x1 [expr {$cx - $ob(padw2)}]
+		set y1 $ob(spd)
+		set x2 [expr {$cx + $ob(padw2)}]
+		set y2 [expr {$ob(spd) + $ob(padh)}]
+		.c coords $ob(pad,s) $x1 $y1 $x2 $y2 
+		.c itemconfigure $ob(pad,s) -fill $ob(colorgp,s)
+	} 
+}
+
+proc set_lines {} {
+	
+	global ob
+
+	set ob(line) [.c create line $ob(ww,w) [expr {$ob(winheight)/2}] $ob(ww,e) [expr {$ob(winheight)/2}] -width 2 -fill grey]
+	set circleR 35	
+	set ob(circle) [.c create oval [expr {$ob(winwidth)/2-$circleR}] [expr {$ob(winheight)/2 - $circleR}] [expr {$ob(winwidth)/2+$circleR}] [expr {$ob(winheight)/2 + $circleR}] -width 2 -outline grey]
+	set ob(gkarea1,s) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2+4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  [expr {$ob(winheight)/2+4*$circleR}] -width 2 -fill grey]
+	set ob(gkarea1,n) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2-4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  [expr {$ob(winheight)/2-4*$circleR}] -width 2 -fill grey]
+	set ob(gkarea2,s) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2+4*$circleR}] [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}]  $ob(ww,s) -width 2 -fill grey]
+	set ob(gkarea3,s) [.c create line [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2+4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  $ob(ww,s) -width 2 -fill grey]
+	set ob(gkarea2,n) [.c create line [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2-4*$circleR}] [expr {($ob(winwidth)/2) - ($ob(ww,gp)/2)}]  $ob(ww,n) -width 2 -fill grey]
+	set ob(gkarea3,n) [.c create line [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}] [expr {$ob(winheight)/2-4*$circleR}] [expr {($ob(winwidth)/2) + ($ob(ww,gp)/2)}]  $ob(ww,n) -width 2 -fill grey]
+}
+
+proc init_adap_controller {} {
+	global ob mob
+
+	set ob(adaptive) 1
+
+	# for checking if the patient has moved
+	set ob(check_move_dp) 0
+	set ob(check_move_ie) 0
+
+	# how long the dp movement should take, in seconds and ticks
+	set ob(slottime_dp) 1
+	# how long the ie movement should take, in seconds and ticks
+	set ob(slottime_ie) 2.5
+
+	# slotticks in samples, fed to movebox (dp)
+	set ob(slotticks_dp) [expr {int($ob(slottime_dp) * $ob(Hz))}]
+	# slotticks in samples, fed to movebox (ie)
+	set ob(slotticks_ie) [expr {int($ob(slottime_ie) * $ob(Hz))}]
+
+	# wait time before moving
+	set ob(pre_wait_dp) 200
+	set ob(pre_wait_ie_out) 200
+	set ob(pre_wait_ie_in) 200
+
+	# wait time until you expect a movement
+	set ob(kvlim_wait_dp) 3000.0
+	set ob(kvlim_wait_ie) 2000.0
+	wshm ankle_games_wait_time_dp $ob(kvlim_wait_dp)
+
+	set ob(init_dp) 0
+	set ob(init_ie) 0
+
+	set ob(slotlength) 1.1
+
+	# this allows the hard i/e movebox to timeout, 
+	# when the player has not moved enough by himself
+	set ob(hard_mb_timeout) 0
+
+	# for moving moveboxes ie and dp
+	set ob(move_ie) 0
+	set ob(move_dp) 0
+
+	set ob(moveit_state) pause
+
+	# every k*ntimes
+	set ob(ntimes) 12
+
+	# for estimating P1 metric
+	set ob(P1) [list]
+	set ob(dx) [list]
+
+	# for estimating P2 metric
+	set ob(P2) [list]
+	set ob(x) [list]
+	
+	# for estimating P3 metric
+	set ob(P3) [list]
+	set ob(speedtraj) [list]
+	set ob(deltay) 0
+	set ob(shootspeed) 0
+	set ob(addspeed) 0
+	set ob(aggrspeed) 0
+	set ob(gainspeed) 25000
+	set ob(shootenable) 0
+	set ob(startmeasuretime) 1	
+	set ob(klik) 0
+	set ob(klok) 0
+	set ob(time2shoot) 0
+
+	# for estimating P4 metric
+	set ob(P4) [list]
+	set ob(torque_ie) [list]
+	set ob(torque_dp) [list]
+
+	# median values of the tracked metrics
+	set ob(medP1) 0
+	set ob(medP2) 0
+	set ob(medP3) 0
+	set ob(medP4) 0
+	
+	# adjustable parameter values
+	set ob(lstiff) [list 10 20 30 35 40 45 50 55 60 65 70 75 80 90 100]
+	set ob(lbspeed) [list 0.3 0.5 0.6 0.65 0.7 0.75 0.8 0.9 1.1 1.4 1.7 2.0 2.3 2.6 3.0]
+	set ob(lngk_speed) [list 0.2 0.3 0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8 0.85 0.9 1.0 1.1] 
+
+	# these are going to be used for the adaptive change of the variables
+	set ob(level_stiff) $mob(level)
+	set ob(level_bspeed) $mob(level)
+	set ob(level_ngk_speed) $mob(level)
+	set ob(stiff) [lindex $ob(lstiff) [expr {$ob(level_stiff)-1}]]
+	set ob(bspeed) [lindex $ob(lbspeed) [expr {$ob(level_bspeed)-1}]]
+	wshm ankle_games_speed $ob(bspeed) 
+	set  ob(ngk_speed) [lindex $ob(lngk_speed) [expr {$ob(level_ngk_speed)-1}]]
+	wshm ankle_games_opponent_speed $ob(ngk_speed)
+
+	# this is to indicate if a player is sluggish - then we challenge him 	
+	set ob(player_was_sluggishP1) 0
+	set ob(player_was_sluggishP2) 0
+	set ob(player_was_sluggishP3) 0
+	set ob(player_was_sluggishP4) 0
+}
+
+# this gets done once.
+proc init_soccer {} {
+	global ob mob
+
+	set ob(calibrated) no
+
+	if {!$ob(ankle)} {
+		exit
+	}
+
+	# refresh rate (and sampling period) in ms
+	set ob(tick) 5
+	set ob(Hz) [expr {1000*(1.0/$ob(tick))}]
+
+	# field dimensions
+	set ob(winwidth) 450 
+	set ob(winheight) 650
+	
+	# This is for the two goalposts, inherited from pong game
+	set mob(whichgame) ns
+
+	# is the game running?
+   	set ob(running) 0
+
+	# colors of paddles (firebrick4,goldenrod2,gold2,DodgerBlue,lightcoral,lightblue)
+	set ob(colorgp,n) lightsalmon1
+	set ob(colorgp,s) DodgerBlue
+
+	# centers
+	set ob(cx) [expr {$ob(winwidth) / 2}]
+	set ob(cy) [expr {$ob(winheight) / 2}]
+	set cx $ob(cx)
+	set cy $ob(cy)
+
+	canvas .c -width $ob(winwidth) -height $ob(winheight) -bg gray90
+	grid .c
+
+	set img(field) [image create photo -format gif -file "images/field2.gif"]
+  	set ob(field) [.c create image 0 0 -image $img(field) -tag field -anchor nw]
+
+	button .but1 -text " New Game" -command new_soccer
+	place .but1 -in . -relx 0.11 -rely 0.8 -anchor ne
+
+	button .but2 -text "Stop Game" -command stop_soccer
+	place .but2 -in . -relx 0.25 -rely 0.8 -anchor ne
+
+	button .but3 -text " Menu " -command {menu_hide .menu}
+	place .but3 -in . -relx 0.14 -rely 0.7 -anchor center
+
+	button .but4 -text " Exit " -command done
+	place .but4 -in . -relx 0.14 -rely 0.94 -anchor center
+
+	font create boardfont -family Helvetica -size 18
+	canvas .board -width 250 -height 150 -bg gray90 -borderwidth 2 -relief sunken
+	place .board -in . -relx 0.8625 -rely 0.5 -anchor center
+
+	.board create text 72 30 -text "Player" -font boardfont -tags "playname name" -anchor center
+	.board create text 182 30 -text "Computer" -font boardfont -tag "compname name" -anchor center
+	.board itemconfigure name -font boardfont
+	label .disp -textvariable mob(bluescore) -font $ob(scorefont) -bg gray90 -fg $ob(colorgp,n)
+	place .disp -in .board -x 182 -y 87 -anchor center
+
+	label .disp2 -textvariable mob(redscore) -font $ob(scorefont) -bg gray90 -fg $ob(colorgp,s)
+	place .disp2 -in .board -x 72 -y 87 -anchor center
+	.board create rectangle 34 49 110 125 -fill gray90 -outline black
+	.board create rectangle 144 49 220 125 -fill gray90 -outline black
+	
+    	wm geometry . 1015x690
+    	. config -bg gray20
+
+	# create a clock canvas
+	set ob(clcksize) 170
+        grid [canvas .clock -width $ob(clcksize) -height $ob(clcksize) -bg gray20 -highlightthickness 0] -sticky news
+        grid rowconfigure . 0 -weight 1
+        grid columnconfigure . 0 -weight 1
+
+	domenu
+	set mob(calibrate) "No"
+
+	make_walls
+	
+	set_walls
+
+	set_lines
+
+	make_paddles
+
+	set_paddles
+
+	make_clock
+
+	# the ball (after field!)
+	set ob(bsize) 20
+	set ob(bsize2) [expr {$ob(bsize)/2}]
+	set ob(bradius) [expr {$ob(bsize)/2}]
+	set bsize $ob(bsize)
+	set x1 [expr {$cx - ($bsize / 2)}]
+	set x2 [expr {$cx + ($bsize / 2)}]
+	set y1 [expr {$cy - ($bsize / 2)}]
+	set y2 [expr {$cy + ($bsize / 2)}]
+	# uncomment this for white ball (1/3) and comment the other two lines (that create the ball figure)
+	#set ob(ball) [.c create oval $x1 $y1 $x2 $y2 -fill white -outline black -width 3 -tag ball]
+	set img(ball) [image create photo img -format gif -file "images/ball10.gif"]
+  	set ob(ball) [.c create image $cx $cy -image $img(ball) -tag ball -anchor center]
+	set ob(ballorig) [.c coords $ob(ball)]
+
+	bind . <s> stop_soccer
+	bind . <n> new_soccer
+	bind . <q> done
+	bind . <Escape> done
+	bind . <space> pause_soccer
+	wm protocol . WM_DELETE_WINDOW { done }
+
+	set ob(lastbat) none
+	
+	# These two allow the anklebot to help in i/e (x) or/and in d/p (y) motion
+	set ob(motorforces_x) 0
+	set ob(motorforces_y) 0
+
+	# south (north) goalpost defended (the ball was caught by goalkeeper)
+	set ob(sdefended) 0
+	set ob(ndefended) 0
+
+	# North Goalkeeper attacks when flag is set
+	set ob(attack) 0
+
+	# This secures exact positioning of the south paddle after plannar movement
+	set ob(lowlimit) [expr {$ob(ww,s)-$ob(padh)}]
+
+	# for moving the north goalkeeper
+	set ob(ngoal) 0 
+	set ob(moveback) 0
+	set ob(moveback_v) 0
+
+	# this is to understand when the south gk moves downwards to the point that ie can happen
+	set ob(sgk_return) 0
+
+	# for knowing when the south goalkeeper returned from dp motion
+	set ob(sgk_returned) 1
+
+	# this allows i/e movement of the anklebot (we must be near 0 angle d/p flexion)
+	set ob(x_motion) 1
+
+	# this flag is raised when the ball aims for the south goalpost	
+	set ob(sgoal) 0
+
+	# for the speed of the shoot
+	set ob(y_old) 0
+	set ob(y_old2) 0
+
+	# for pausing the game
+	set ob(paused) no
+
+	# for asking log
+    	set ob(asklog) 1
+
+	set mob(startlogging) 1
+
+	# median values of the tracked metrics, speed of the ball and stiffness initializations
+	# (so that we won't get an error if we press quit immediately after initialization) 
+	set ob(medP1) 0
+	set ob(medP2) 0
+	set ob(medP3) 0
+	set ob(medP4) 0
+	set ob(bspeed) 0
+	set ob(stiff) 0
+
+	# lists for virtual rotation of the wall
+	set ob(wlist,s) [list n s w e]
+	set ob(wlist,w) [list e w n s]	
+	set ob(wlist,n) [list s n w e]
+	set ob(wlist,e) [list w e n s]
+
+	if {!$mob(audio)} {
+		set ob(sound) 1
+	} else {
+		set ob(sound) 0
+	}
+
+	if {[regexp ^(Linux|Unix|QNX) [tclos]]} {
+		.c config -cursor {crosshair gray}
+	}
+	start_rtl
+	wshm no_safety_check 1
+ 
+	wshm ankle_damp 1.
+ 
+	after 250 menu_hide .menu
+}
+
+proc calibrate_immed {} {
+	global ob mob
+
+    	puts "zeroing encoders"
+    	wshm pcienc_zero 1
+    	after 200
+	puts "done"
+	set ob(calibrated) yes
+	set mob(calibrate) Yes
+}
+
+proc stop_soccer {} {
+	global mob ob
+
+	# zero-ing display
+	set mob(shots) 0
+	set mob(redscore) 0
+	wshm ankle_games_score $mob(redscore)
+	set mob(bluescore) 0
+	wshm ankle_games_opponent_score $mob(bluescore)
+
+	updateClock 
+	after cancel moveball
+
+	if {$ob(motorforces_x) || $ob(motorforces_y)} {
+		acenter
+	}
+
+	if {$mob(goalrow) > $mob(maxinrow)} {
+		set mob(maxinrow) $mob(goalrow)
+	}
+}
+
+# restart each new game
+proc new_soccer {} {
+	global ob mob
+	
+	if {$ob(calibrated)=="no"} {
+		error [imes "Please calibrate first"]
+	}
+	.c delete pred
+
+	# anklebot stiffness for the entire game session
+	wshm ankle_stiff $mob(menu,stiff)
+	
+	set ob(km) 0
+
+	if {$ob(running)} {
+		stop_soccer
+	}
+    	set ob(running) 1
+	
+	set ob(motorforces_x) 1
+	set ob(motorforces_y) 1
+
+	if {$mob(nomotorforces_x)} {
+		set ob(motorforces_x) 0
+	} 
+	if {$mob(nomotorforces_y)} {
+		set ob(motorforces_y) 0
+	} 
+
+	# for ob(sound) = 1, sound is on
+	set ob(sound) 0
+	if {!$mob(audio)} {
+		set ob(sound) 1
+	}
+
+	regsub -all {[^0-9]} $mob(endgame) {} mob(endgame)
+	set ob(endgame) $mob(endgame)
+	regsub -all {[^0-9]} $mob(level) {} mob(level)
+	set ob(level) $mob(level)
+
+	eval .c coords $ob(ball) $ob(ballorig)
+	set ob(lastbat) none
+
+	array set mob {
+		saves 0
+		redscore  0
+		bluescore 0
+		shots 0
+		goalrow  0
+		maxinrow  0
+		wall 0
+		paddle 0
+	}
+	wshm ankle_games_score $mob(redscore)
+	wshm ankle_games_opponent_score $mob(bluescore)
+		
+	set ob(sdefended) 0
+	set ob(ndefended) 0
+
+	set_walls
+
+	set ob(level) [bracket $ob(level) 1 15]
+	set ob(forw)  [expr {$ob(level) * 2.0 * $ob(tick) / 10.0 }]
+	set ob(side)  [expr {$ob(level) * 4.0 * $ob(tick) / 10.0 }]
+	
+	.clock delete "all"
+	make_clock
+	.board delete playname
+	.board delete compname
+	.board create text 72 30 -text $mob(whoN) -font boardfont -tag "playname" -anchor center
+	.board create text 182 30 -text $mob(comp) -font boardfont -tag "compname" -anchor center
+
+	init_adap_controller
+	
+	# watch out! this is for the vertical speed of the ball shoot (default 0.7*speed)
+	set ob(by_traj) [expr {0.7*$ob(bspeed)}]
+	prepare_logging
+	
+	after 250 menu_hide .menu
+
+	startball n
+	moveball
+}
+
+proc pause_soccer {} {
+	global ob
+
+	if {$ob(paused) == "no"} {			
+		set ob(paused) yes
+		stop_movebox 0
+	} else {
+		set ob(paused) no
+		startball n
+		moveball
+	}	
+}
+
+# startball starts on a new game or after a goal
+proc startball {i} {
+	global ob
+	# where does the ball start?  When i = "n", ball moves towards north.
+
+	set ob(kickoff) 1
+	set ob(ngoal) 0
+	set ob(sgoal) 0
+
+	set ob(forw) 2
+	if {$i == "s"} {
+		set ob(dir)   [list 0.0 [expr {1.0 + ($ob(forw)} / 5.0)]]
+	} elseif {$i == "n"} {
+		set ob(dir)   [list 0.0 [expr {-1.0 - ($ob(forw)} / 5.0)]]
+	} else {
+		error "startball: i should be s or n"
+	}
+	set_paddles
+
+	# if motors are powered, then move them to zero position and raise the flag for horizontal movements.
+	if {$ob(motorforces_x) || $ob(motorforces_y)} {
+		if {$ob(running)} {
+			acenter
+			after 300 stop_movebox 0
+		}
+		set ob(x_motion) 1
+	} else {
+		stop_movebox 0
+	}
+}
+
+proc movegoalkeeper {} {
+	global ob
+
+	set ob(gkspeed) $ob(ngk_speed)
+
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+
+	set origx [expr {$origx - $ob(winwidth)/2 + $ob(padw)/2}]
+	
+	if {[expr {$ob(ngoalx)-$origx}]<-1} {
+		if {$origx > $ob(ngoalx)} {
+			eval .c move pn "-$ob(gkspeed) 0"
+			}
+		} elseif {[expr {$ob(ngoalx)-$origx}]>0} {
+			if {$origx < [expr {$ob(ngoalx)+$ob(padw)/2}]} {
+			eval .c move pn "$ob(gkspeed) 0"
+		}
+	}
+}
+
+
+proc movegoalkeeperback {} {
+	global ob
+
+	set ob(gkspeed) 1
+	set ob(ngoal) 0
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+	scan [.c coords $ob(pad,s)] "%s %s" origxs origys
+	if {$origx <  [expr {$ob(winwidth)/2 - $ob(padw)/2-1}]} {
+		eval .c move pn "$ob(gkspeed) 0"
+		eval .c move ball "$ob(gkspeed) 0"
+	} elseif {$origx > [expr {$ob(winwidth)/2 - $ob(padw)/2+1}]} {
+		eval .c move pn "-$ob(gkspeed) 0"
+		eval .c move ball "-$ob(gkspeed) 0"
+	} else {
+		# goalkeeper is centered
+		set ob(moveback) 0
+		set ob(attack) 1
+	}
+}
+
+proc start_attack {} {
+	global ob
+	
+	set ob(sp_fwd) 0.75
+
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+
+	if {[expr {$origy+$ob(bsize)}] <= $ob(winheight)/2} {
+		eval .c move pn "0 $ob(sp_fwd)"
+		eval .c move ball "0 $ob(sp_fwd)"
+	} else {
+		shoot n
+		set ob(moveback_v) 1
+	}
+}
+
+proc movegoalkeeperback_v {} {
+	global ob
+
+	set ob(sp_back) [expr {0-$ob(sp_fwd)}]
+	set ob(ngoal) 0
+
+	scan [.c coords $ob(pad,n)] "%s %s" origx origy
+
+	if {$origy >=  [expr {$ob(ww,n) +20}]} {
+		eval .c move pn "0 -2"
+	} else {
+		# goalkeeper is centered
+		set ob(moveback_v) 0
+		set ob(ndefended) 0 
+	}
+}
+
+proc dodrag {w x y} {
+	global ob
+	
+	scan [.c coords $ob(pad,s)] "%s %s" origx origy
+	
+	if {$ob(livewallgp,s)} {
+		if { [expr {$ob(ww,s) -$origy}]>=55} {		
+			dragy $w $y ps
+		} else {
+			dragx $w $x ps
+			if {$ob(sgk_return)} {
+				# this is to know when the south goalkeeper returned from shoot
+				# ob(sgk_return) will be raised again after the next shoot; 
+				# this flag makes the if statement to be executed once
+				set ob(sgk_return) 0
+				# this flag is raised for the entire time that south gk moves in ie (enables agap_moveit)
+				set ob(sgk_returned) 1
+				set ob(x_motion) 1
+				cancel_moveit_timeouts
+				wshm ankle_stiff 5
+			}
+		} 
+	}
+}
+
+proc dodragball {w x y} {
+	global ob
+
+       set ob(deltay) [expr {0-($y-$ob(y_old))}]
+
+	scan [.c coords $ob(ball)] "%s %s" ballorigx ballorigy
+	scan [.c coords $ob(pad,s)] "%s %s" origx origy
+
+	set paddlepos [expr {$origx+$ob(padw)/2-$ob(winwidth)/2}]
+	set centralpixels 20 
+
+		if { [expr {abs($paddlepos)}]<$centralpixels } {
+			if {$ob(startmeasuretime)} {
+				set ob(startmeasuretime) 0
+				set ob(klik) [clock clicks -milliseconds]
+			}
+			set ob(addspeed) 1
+			if {$ob(shootenable)} {
+				if {$ob(motorforces_y) && $ob(player_status) == "shoot"} {
+					set ob(check_move_dp) 1
+					set ob(sgoaly) 0.25
+					set dest [list 0.0 $ob(sgoaly)]
+					wshm ankle_games_trgt $ob(sgoaly)
+					wshm ankle_games_hdir 0
+					after $ob(pre_wait_dp) [list adap_moveit "vert" {0 $ob(slotticks_dp) 1} $dest]
+					set ob(moveit_wait) [list adap_moveit "vert" {0 400 0} $dest]
+					set ob(moveit_state) pre_wait
+				} else {
+					stop_movebox 0
+				}
+				set ob(shootenable) 0
+			} else {
+				# for safety reasons: No x movement when the D/P angle is  NOT near zero
+				if {$origy<[expr {0.9*$ob(lowlimit)}]} {
+					set ob(x_motion) 0
+				} else {
+					if {$ob(player_status) == "move_back"} {
+						# is it ever happening???
+						wshm ankle_stiff 0.								
+						#puts "inside dodragball"
+						cancel_moveit_timeouts
+						set ob(players_status) defend
+					}
+				}
+			}
+			if {$y>$ob(lowlimit)} {
+				dragy $w $ob(lowlimit) ps
+				dragyball $w $ob(lowlimit) ball
+			} elseif {$y< $ob(lowlimit)} {
+				dragy $w $y ps
+				dragyball $w $y ball
+			}
+			if {$origy <= $ob(winheight)/2} {
+				set ob(klok) [clock clicks -milliseconds]
+				set ob(time2shoot) [expr {$ob(klok)-$ob(klik)}]
+				shoot s
+				set ob(aggrspeed) 0
+				set ob(addspeed) 0
+				set ob(startmeasuretime) 1
+			}
+		} else {
+			set ob(x_motion) 1
+			if {$origx>=$ob(ww,w) && $origx<=[expr {$ob(ww,e)-$ob(padw)}]} { 
+				dragx $w $x ps
+				dragxball $w $x ball
+			} elseif {$origx<[expr {$ob(ww,w)+$ob(padw)/2 }]} {
+				dragx $w [expr {$ob(ww,w)+$ob(padw) /2}] ps
+				dragxball $w [expr {$ob(ww,w)+$ob(padw)/2 }] ball
+			} elseif {$origx>[expr {$ob(ww,e)-$ob(padw) /2}]} {
+				dragx $w [expr {$ob(ww,e)-$ob(padw) /2}] ps
+				dragxball $w [expr {$ob(ww,e)-$ob(padw)/2 }] ball
+			}
+	set ob(y_old) $y
+	}
+}
+
+proc shoot {i} {
+	global ob mob
+
+	set side [expr {.0+ round(rand())}]
+	if {$i =="s"} {
+		if {$ob(time2shoot)>0} {
+			set speed [expr {$ob(gainspeed)*$ob(aggrspeed)/$ob(time2shoot)}]
+		} else {
+			startball s
+			set speed 0
+		}
+		#puts "time2shoot = $ob(time2shoot) ob(aggrspeed) = $ob(aggrspeed) speed = $speed"
+		if {$speed>2} {
+			set speed 2
+		} elseif {$speed <0.35} {
+			set speed 0.35
+		}
+		
+		### P3 ###
+		smoothcrit $ob(speedtraj)
+		set mikosP3 [llength $ob(P3)]
+		if {$mob(shots) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP3 % $ob(ntimes)]} {
+				set med [eval median $ob(P3)]
+				adjust_adap_param $med P3
+			}
+		} elseif {$mob(shots) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP3) [eval track_adap_param {$ob(P3)}]
+		} else {
+			if {![expr $mikosP3 % $ob(ntimes)]} {
+				set med [eval median $ob(P3)]
+				challenge_adap_param $med P3
+			}		
+		}
+		set ob(speedtraj) []
+		### --- ###
+		set ob(sdefended) 0
+		set ob(shootenable) 0
+		set ob(sgk_return) 1
+		set ob(sgk_returned) 0
+		set ob(player_status) move_back
+
+		set xr [expr {$speed*pow(-1,$side)}] 
+		set yr [expr {-abs($xr)*3}]
+		defend $ob(bbox) $xr $yr $i
+		incr mob(shots)
+
+		if {$ob(motorforces_y) && $ob(player_status) == "move_back"} {
+			set ob(sgoaly) -0.05
+			set dest [list 0.0 $ob(sgoaly)]
+			wshm ankle_games_trgt $ob(sgoaly)
+			wshm ankle_games_hdir 0
+			after $ob(pre_wait_dp) [list adap_moveit "vert" {0 $ob(slotticks_dp) 1} $dest]
+			set ob(moveit_wait) [list adap_moveit "vert" {0 400 0} $dest]
+			set ob(moveit_state) pre_wait
+			set ob(x_motion) 1
+		} 
+		updateClock 
+	} elseif {$i == "n"} {
+		set ob(ndefended) 0
+		set gain $ob(bspeed)
+		set xr [expr {$gain*0.31*pow(-1,$side)}] 
+		# ob(by_traj) is coming from calculate_ball_traj_time
+		set yr $ob(by_traj)
+		#calculate_ball_traj_time
+		set ob(moveback_v) 1
+		set ob(check_move_ie) 1 
+		defend $ob(bbox) $xr $yr $i
+		#set ob(klik2) [clock clicks -milliseconds]
+	}
+	set ob(dir) "$xr $yr" 
+}	
+
+proc dragx {w x p} {
+	global ob
+
+	set x1 [expr {[.c canvasx $x] - $ob(padw2)}]
+	set x2 [expr {$x1 + $ob(padw)}]
+	foreach {d1 y1 d2 y2} [.c coords $p] {break}
+	# this is inserted here to prevent south paddle to go "inside" the goalpost,
+	# just like in dragxball if - statement...
+	if {$y1>$ob(spd)} {
+		set y1 $ob(spd)
+	}
+	.c coords $p $x1 $y1 $x2 [expr {$y1+$ob(padh)}]
+}
+
+proc dragy {w y p} {
+	global ob
+
+	set y1 [expr {[.c canvasy $y] - $ob(padw2)}]
+	set y2 [expr {$y1 + $ob(padw)}]
+	foreach {x1 d1 x2 d2} [.c coords $p] {break}
+	.c coords $p $x1 $y1 $x2 $y2
+}
+
+proc dragxball {w x p} {
+	global ob
+
+	set x1 [expr {[.c canvasx $x]-$ob(bsize)/2}]
+	set x2 [expr {$x1 + $ob(bsize)}]
+	foreach {d1 y1 d2 y2} [.c coords $p] {break}
+	if {$y1 > [expr {$ob(ww,s)-2*$ob(bsize)}]} {
+		set y1 [expr {$ob(ww,s)-2.5*$ob(bsize)}]
+	}
+	.c coords $p [expr {($x1+$x2)/2}] $y1
+}
+
+proc dragyball {w y p} {
+	global ob
+
+	set y1 [expr {[.c canvasy $y] - $ob(bsize)}]
+	set y2 [expr {$y1 + $ob(bsize)}]
+	foreach {x1 d1 x2 d2} [.c coords $p] {break}
+	.c coords $p $x1 [expr {($y1+$y2)/2}]
+}
+
+proc getxy {} {
+	global ob
+
+	set x [rshm ankle_ie_pos]
+	set y [rshm ankle_dp_pos]
+
+	
+	set ob(shootspeed) [expr {($y-$ob(y_old2))/$ob(tick)}]
+	set ob(y_old2) $y
+	if {$ob(addspeed)} {
+		incr ob(aggrspeed) $ob(shootspeed)
+		lappend ob(speedtraj) $ob(shootspeed)
+	}
+
+	set x [expr int($ob(scale) * $x + $ob(winwidth)/2)]
+	set y [expr int(-$ob(scale) * $y + $ob(ww,s)-2*$ob(padh))]
+	list $x $y
+}
+
+# shake the walls.
+proc shake {obj} {
+	global ob
+
+	eval .c move $obj 0 10
+	
+	after 50 [list eval .c move $obj 10 0 ]
+
+	after 100 [list eval .c move $obj 0 -20 ]
+	after 150 [list eval .c move $obj -20 0 ]
+
+	after 200 [list eval .c move $obj 0 10 ]
+	after 250 [list eval .c move $obj 10 0 ]
+}
+
+# did the ball fall off the table?
+proc ballofftable {bbox} {
+	global ob
+
+	foreach {x1 y1 x2 y2} $bbox {break}
+	if {
+	($x1 < 0) ||
+	($x2 > $ob(winwidth)) ||
+	($y1 < 0) ||
+	($y2 > $ob(winheight)) } {
+		# puts "ball off table, bbox $bbox dir $ob(dir)"
+		set y1_old $y1
+		# throw the ball to the center of the table,
+		# and send it back at half speed.
+		foreach {x y} $ob(dir) {break}
+		set bsize $ob(bsize)
+		set cx $ob(cx)
+		set cy $ob(cy)
+		set bsize $ob(bsize)
+		set x1 [expr {$cx - ($bsize / 2)}]
+		set x2 [expr {$cx + ($bsize / 2)}]
+		set y1 [expr {$cy - ($bsize / 2)}]
+		set y2 [expr {$cy + ($bsize / 2)}]
+		# Uncomment following line for white ball
+		#.c coords ball $x1 $y1 $x2 $y2
+		.c coords ball $cx $cy
+		# slow it down, send it backwards
+		set x [expr $x / -2.0]
+		set y [expr $y / -2.0]
+		set ob(dir) "$x $y"
+		if {$y1_old<0} {
+			after 200 {startball n}
+		} else {
+			after 200 {startball s}
+		}
+	}
+}
+
+# the ball was a goal.
+proc hitwall {} {
+	global ob
+	
+	.c delete pred
+	set ob(ngoal) 0
+	set ob(sgoal) 0
+	if {$ob(motorforces_x) || $ob(motorforces_y)} {
+		after 10 stop_movebox 0 		
+	}
+}
+
+# the ball was saved
+proc hitpaddle_s {} {
+	global ob mob
+	
+	# this is for measuring shooting ball trajectory time 
+	# goes together with ob(klik2 found in process shoot
+	#set ob(klok2) [clock clicks -milliseconds]
+	#set cl [expr {$ob(klok2)-$ob(klik2)}]
+	#puts "time = $cl"
+	.c delete pred
+
+	set ob(sgoal) 0	
+	set ob(sdefended) 1
+	set ob(shootenable) 1
+
+	set ob(player_status) shoot
+
+	if {$ob(kickoff)} {
+		if {$ob(motorforces_y) && $ob(player_status)== "shoot"} {
+			set ob(check_move_dp) 1
+			set ob(sgoaly) 0.25
+			set dest [list 0.0 $ob(sgoaly)]
+			wshm ankle_games_trgt $ob(sgoaly)
+			wshm ankle_games_hdir 0
+			after $ob(pre_wait_dp) [list adap_moveit "vert" {0 $ob(slotticks_dp) 1} $dest]
+			set ob(moveit_wait) [list adap_moveit "vert" {0 400 0} $dest]
+			set ob(moveit_state) pre_wait
+		} else {
+			stop_movebox 0
+		}
+		set ob(kickoff) 0
+	} else {
+		if {$ob(motorforces_x) && $ob(sgk_returned) && $ob(player_status) =="shoot"} {
+			set ob(sgoalx) 0
+			set dest [list $ob(sgoalx) 0.0]
+			wshm ankle_games_trgt $ob(sgoalx)
+			wshm ankle_games_hdir 1
+			after $ob(pre_wait_ie_in) [list adap_moveit "hriz" {0 $ob(slotticks_ie) 1} $dest]
+			set ob(moveit_wait) [list adap_moveit "hriz" {0 400 0} $dest]]		
+			set ob(moveit_state) pre_wait		
+		} else {
+			stop_movebox 0
+		}
+		incr mob(saves)
+		### P1 ###
+ 		waitball $ob(dx)
+		set mikosP1 [llength $ob(P1)]
+		if {$mob(shots) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP1 % $ob(ntimes)]} {
+				set med [eval median $ob(P1)]
+				adjust_adap_param $med P1
+			}		
+		} elseif {$mob(shots) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP1) [eval track_adap_param {$ob(P1)}]
+		} else {
+			if {![expr $mikosP1 % $ob(ntimes)]} {
+				set med [eval median $ob(P1)]
+				challenge_adap_param $med P1
+			}		
+		}
+		set ob(dx) []
+		### - ###
+		### P2 ###
+		mindist $ob(x)
+		set mikosP2 [llength $ob(P2)]
+		if {$mob(shots) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP2 % $ob(ntimes)]} {
+				set med [eval median $ob(P2)]
+				adjust_adap_param $med P2
+			}		
+		} elseif {$mob(shots) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP2) [eval track_adap_param {$ob(P2)}]
+		} else {
+			if {![expr $mikosP2 % $ob(ntimes)]} {
+				set med [eval median $ob(P2)]
+				challenge_adap_param $med P2
+			}		
+		}
+		set ob(x) []
+		### - ###
+		### P4 ###
+		estimate_torque_ie $ob(torque_ie)
+		set mikosP4 [llength $ob(P4)]
+		if {$mob(shots) < [expr {int(0.66*$ob(endgame))}]} {
+			if {![expr $mikosP4 % $ob(ntimes)]} {
+				set med [eval median $ob(P4)]
+				adjust_adap_param $med P4
+			}		
+		} elseif {$mob(shots) == [expr {int(0.66*$ob(endgame))}]} {
+			set ob(medP4) [eval track_adap_param {$ob(P4)}]
+		} else {
+			if {![expr $mikosP4 % $ob(ntimes)]} {
+				set med [eval median $ob(P4)]
+				challenge_adap_param $med P4
+			}		
+		}
+		set ob(torque_ie) []
+		### - ###
+	}	
+
+	if {$ob(sound)} {
+		nbeep 5 A 50
+	} 
+	set ob(check_move_ie) 1
+}
+
+
+proc hitpaddle_n {} {
+	global ob mob
+	
+	.c delete pred
+
+	set ob(sdefended) 0
+	set ob(ndefended) 1
+
+	set ob(moveback) 1
+	if {$ob(sound)} {
+ 		nbeep 3 E 50
+	} 
+	if {$ob(kickoff)} {
+		set ob(kickoff) 0
+	} else {
+		set mob(goalrow) 0
+	}
+}	
+
+proc defend {bbox xr yr i} {
+	global ob
+	if {$i == "s"} {
+		if {$ob(motorforces_x) || $ob(motorforces_y)} {
+			stop_movebox 0
+		}
+	}
+	predict2 $bbox $xr $yr $i
+}
+
+proc adap_moveit {dir forlist dest} {
+	global ob
+
+	set dir [uplevel 1 [list subst -nocommands $dir]]
+    	set forlist [uplevel 1 [list subst -nocommands $forlist]]
+    	set dest [uplevel 1 [list subst -nocommands $dest]]
+
+	set x [rshm ankle_ie_pos]
+	set y [rshm ankle_dp_pos]
+
+	if {$dir== "hriz"} {
+		set src [list $x 0.0 0.0 0.0]
+    		set nx1 [lindex $src 0]
+    		set nx2 [lindex $dest 0]
+		set wait_time [expr {int($ob(kvlim_wait_ie))}]
+		set ob(hdir) 0
+	} else {
+		set src [list 0.0 $y 0.0 0.0]
+    		set nx1 [lindex $src 1]
+    		set nx2 [lindex $dest 1]
+		set wait_time [expr {int($ob(kvlim_wait_dp))}]
+		set ob(hdir) 1
+	}
+	
+    	# zero the pm counters
+    	#adap_zero_pm
+
+	set y1 0.0
+	set y2 0.0
+
+	set wid [expr {abs($nx2 - $nx1)}]
+	set mid [expr {($nx1 + $nx2) / 2.}] 
+   	
+	set ob(forlist) $forlist
+	set ob(mbmid) $mid
+	set ob(mbwid) $wid
+	set ob(mby1) $y1
+	set ob(mby2) $y2
+	set ob(mbnx2) $nx2
+
+	# a stationary slot immediately
+	wshm ankle_stiff 5.	
+	movebox 0 8 {0 1 0} \
+	    [swaps $ob(mbmid) $ob(mby1) $ob(mbwid) 0.] \
+	    [swaps $ob(mbnx2) $ob(mby2) 0. 0.]
+    	set ob(mb_state) open_slot
+
+	# closing slot movebox
+    	set ob(moveit_slot) [after 2500 [list moveit]]
+}
+
+proc moveit {} {
+	global ob mob
+
+   	 # don't cancel do_slot_timeout here!
+    	cancel_moveit_timeouts
+
+	# zero adap timers right before adaptive movebox, throwing away the stuff
+	# accumulated before the patient moves (or doesn't)
+   	 #adap_zero_pm
+	movebox 0 8 {$ob(forlist)} \
+	    [swaps $ob(mbmid) $ob(mby1) $ob(mbwid) 0.] \
+	    [swaps $ob(mbnx2) $ob(mby2) 0. 0.]
+    	set ob(mb_state) movebox
+}
+
+proc cancel_moveit_timeouts {} {
+    global ob
+
+    if {[info exists ob(moveit_after)]} {
+	#puts "cancel moveit_After"
+	after cancel $ob(moveit_after)
+	unset ob(moveit_after)
+    }
+    if {[info exists ob(moveit_wait)]} {
+	after cancel $ob(moveit_wait)
+	unset ob(moveit_wait)
+    }
+}
+
+# if adaptive, check the velocity magnitude.
+# if the patient's ankle has moved enough, start the slot now.
+proc check_vel {motion} {
+	global ob
+
+if {$ob(adaptive)} {
+	if {[info exists ob(moveit_after)]} {
+	    if {$ob(slottime_dp) <= 0.0} { set ob(slottime_dp) 1.0 }
+	    if {$ob(slottime_ie) <= 0.0} { set ob(slottime_ie) 1.0 }
+		if {$motion == "dp"} {
+	  		# .20 controls the sensitivity of the velocity limit.
+	    		# lower is more sensitive
+			set ob(vellim) [expr {.020 * 1.875 * $ob(slotlength) / $ob(slottime_dp)}]
+			set ob(velmag) [expr {abs([rshm ankle_dp_vel])}]
+			set ob(patient_moved_dp) "no"
+#puts "DP mag=$ob(velmag), lim=$ob(vellim)"
+			if {$ob(velmag) > $ob(vellim)} {
+				# the patient did dp movement
+				set ob(patient_moved_dp) "yes"
+				incr ob(init_dp)
+				# execute the command immediately.
+				# mb_command cancels the after.
+				set mb_command [lindex [after info $ob(moveit_after)] 0]
+				eval $mb_command
+				set ob(check_move_dp) 0
+			}
+		} elseif {$motion == "ie"} {
+			# .10 might need to be changed.
+			set ob(vellim) [expr {.010 * 1.875 * $ob(slotlength) / $ob(slottime_ie)}]
+			set ob(velmag) [expr {abs([rshm ankle_ie_vel])}]
+		  	set ob(patient_moved_ie) "no"
+#puts "IE mag=$ob(velmag), lim=$ob(vellim)"
+			if {$ob(velmag) > $ob(vellim)} {
+				# the patient did ie movement
+				set ob(patient_moved_ie) "yes"
+				incr ob(init_ie)
+				# execute the command immediately.
+				# mb_command cancels the after.
+				set mb_command [lindex [after info $ob(moveit_after)] 0]
+				eval $mb_command
+				set ob(check_move_ie) 0
+			}
+		}
+	}
+}
+}
+
+proc track_adap_param {list} {
+	global ob
+
+	set list2 [list]
+	set mikos [llength $list]	
+	for {set i [expr {int($mikos/2.)}]} {$i <= [expr {$mikos-1}]} { incr i } {
+		lappend list2 [lindex $list $i]
+	}
+	set med [eval median $list2]
+	return $med 
+}
+
+proc challenge_adap_param {med metric} {
+	global ob
+
+	if {!$ob(adaptive)} { return }
+	switch $metric {
+	P1 {
+		puts "-----------"
+		puts "Challenge P1 med = $med, ob(medP1) = $ob(medP1)"
+		if {$med < [expr {0.66 * $ob(medP1)}]} {
+			# the player is sluggish (or tired?) - challenge the player
+			increase_ball_speed
+			set ob(stiff_inc) 0
+			set ob(player_was_sluggishP1) 1
+		} elseif {$med >= [expr {0.66 * $ob(medP1)}] && $med < [expr {0.9 * $ob(medP1)}]} {
+			# the player seems ok - do nothing except player was sluggish before
+			if {$ob(player_was_sluggishP1)} {
+				# the player was sluggish but not anymore - decrease speed, we "woke up" the player
+				decrease_ball_speed
+				set ob(stiff_inc) 0
+				set ob(player_was_sluggishP1) 0
+			}
+		} else {
+			# the player is in average enjoying the game - challenge the player
+			increase_ball_speed
+			increase_stiffness
+			set ob(stiff_inc) 1
+		}
+	}
+	P2 {
+		puts "Challenge P2 med = $med, ob(medP2) = $ob(medP2)"
+		if {$med < [expr {0.5 * $ob(medP2)}]} {
+			# the player is sluggish (or tired?) - challenge the player
+			decrease_size_paddles
+			set ob(player_was_sluggishP2) 1
+		} elseif {$med >= [expr {0.5 * $ob(medP2)}] && $med < [expr {0.85 * $ob(medP2)}] } {
+			# the player seems ok - do nothing except player was sluggish before
+			if {$ob(player_was_sluggishP2)} {
+				# the player was sluggish but not anymore - decrease speed, we "woke up" the player
+				increase_size_paddles
+				set ob(player_was_sluggishP2) 0
+			}
+		} else {
+			# the player is in average enjoying the game - challenge the player
+			decrease_size_paddles
+		}
+	}
+	P3 {
+		puts "Challenge P3 med = $med, ob(medP3) = $ob(medP3)"
+		if {$med < [expr {0.66 * $ob(medP3)}]} {
+			# the player is sluggish (or tired?) - challenge the player
+			increase_ngk_speed
+			set ob(kvlim_wait_dp) [expr {$ob(kvlim_wait_dp)*1.15}]
+			if {$ob(kvlim_wait_dp)>6000} {set ob(kvlim_wait_dp) 6000}
+		 	puts "waiting time for shooting movebox increased by 15%, now it is $ob(kvlim_wait_dp) ms"
+			set ob(player_was_sluggishP3) 1
+		} elseif {$med >= [expr {0.66 * $ob(medP3)}] && $med < [expr {0.9 * $ob(medP3)}] } {
+			# the player seems ok - do nothing except player was sluggish before
+			if {$ob(player_was_sluggishP3)} {
+				# the player was sluggish but not anymore - decrease speed, we "woke up" the player
+				decrease_ngk_speed
+				set ob(kvlim_wait_dp) [expr {$ob(kvlim_wait_dp)*0.875}]
+				if {$ob(kvlim_wait_dp)<1000} {set ob(kvlim_wait_dp) 1000}
+		 		puts "waiting time for shooting movebox decreased by 13.5%, now it is $ob(kvlim_wait_dp) ms"
+				set ob(player_was_sluggishP3) 0
+			}
+		} else {
+			# the player is in average enjoying the game - challenge the player
+			increase_ngk_speed
+			set ob(kvlim_wait_dp)  [expr {$ob(kvlim_wait_dp)*1.5}]
+			if {$ob(kvlim_wait_dp)>6000} {set ob(kvlim_wait_dp) 6000}
+		 	puts "waiting time for shooting movebox increased by 50%, now it is $ob(kvlim_wait_dp) ms"
+		}
+		wshm ankle_games_wait_time_dp $ob(kvlim_wait_dp)
+	}
+	P4 {
+		puts "Challenge P4 med = $med, ob(medP4) = $ob(medP4)"
+		if {$med > [expr {1.1 * $ob(medP4)}]} {
+			# the player is sluggish (or tired?) - challenge the player
+			decrease_stiffness
+			if {$ob(stiff_inc)} {decrease_stiffness}
+			decrease_size_paddles
+		}
+	}
+	}		
+}
+
+proc adjust_adap_param {med metric} {
+	global ob
+
+if {!$ob(adaptive)} { return }
+	
+	switch $metric {
+	P1 {
+		puts "-----------"
+		puts "P1 med = $med"
+		if {$med <0.8} {
+			# the player did really bad --> decrease the speed of the ball
+			decrease_ball_speed
+			set ob(stiff_inc) 0
+		} elseif {$med >=0.8 && $med <1.7} {
+			# the player does ok; challenge the player! --> increase the speed of the ball
+			increase_ball_speed
+			set ob(stiff_inc) 0
+		} elseif {$med >=1.7} {
+			#the player does really good; challenge the player! --> increase the speed of the ball twice
+			# if it is not possible, increase it once.
+			# at the same time, increase stiffness a bit
+			increase_ball_speed
+			increase_ball_speed
+			increase_stiffness
+			set ob(stiff_inc) 1
+		}
+		# calculate new forlist for the "hard" movebox (if the ball speed changes, 
+		# the responsiveness of the ie hard movebox must change too
+		#  since the time window changes - so we dont make the gk to wait
+		#  for the ball for a long time)
+		calculate_ball_traj_time 
+	}
+	P2 {
+		puts "P2 med = $med"
+		if {$med < 0.33} {
+			#the player did really bad --> increase the size of the paddle
+			increase_size_paddles
+			set ob(spaddles_dec) 0 
+		} elseif {$med >=0.33 && $med < 0.6} {
+			#the player did ok --> decrease the size of the paddle a bit
+			#decrease_size_paddles
+			set ob(spaddles_dec) 0
+		} elseif {$med > 0.6} {
+			#the player did really good --> decrease the size of the paddle twice, if possible
+			decrease_size_paddles
+			set ob(spaddles_dec) 1 
+			#decrease_size_paddles
+		}
+		set_paddles
+	}
+	P3 {
+		puts "P3 med = $med"
+		if {$med < 0.1} {
+			# the shooting was not smooth --> decrease waiting time for second movebox
+			decrease_ngk_speed
+			if {$ob(kvlim_wait_dp)>1175} {
+				set ob(kvlim_wait_dp) [expr {$ob(kvlim_wait_dp)*0.85}]
+		 		puts "waiting time for shooting movebox decreased by 15%, now it is $ob(kvlim_wait_dp) ms"
+			}
+		} elseif {$med >=0.1 && $med <0.2} {
+			# the shooting was almost smooth --> increase waiting time for second movebox
+			if {$ob(kvlim_wait_dp) <= 6000} {
+				set ob(kvlim_wait_dp) [expr {$ob(kvlim_wait_dp)*1.15}]
+		 		puts "waiting time for shooting movebox increased by 15%, now it is $ob(kvlim_wait_dp) ms"
+			}
+		} elseif {$med >=0.2} {
+			# the shooting was very smooth, the movebox does the job, the patient is sluggish --> increase waiting time to maximum
+			increase_ngk_speed
+			set ob(kvlim_wait_dp)  [expr {$ob(kvlim_wait_dp)*1.5}]
+			if {$ob(kvlim_wait_dp)>6000} {set ob(kvlim_wait_dp) 6000}
+		 	puts "waiting time for shooting movebox increased to maximum, now it is $ob(kvlim_wait_dp) ms"
+		}
+		wshm ankle_games_wait_time_dp $ob(kvlim_wait_dp)
+	}
+	P4 {
+		puts "P4 med = $med"
+		if {$med>0.5} {
+			# the hard movebox does all the job --> make the game easier
+			increase_size_paddles
+			if {$ob(spaddles_dec)} {increase_size_paddles}
+		} else {
+			# stiffness seems ok, both patient and movebox are moving the ankle --> decrease stiffness to see
+			decrease_stiffness
+			if {$ob(stiff_inc)} {decrease_stiffness}
+		}
+	}
+	}
+}
+
+proc decrease_ngk_speed {} {
+	global ob
+	set cur [lindex $ob(lngk_speed) [expr {$ob(level_ngk_speed)-1}]] 
+	set index [lsearch $ob(lngk_speed) $cur]
+	if {[expr {$index-1}]>=0} {
+		set ob(ngk_speed) [lindex $ob(lngk_speed) [expr {$index-1}]]
+		wshm ankle_games_opponent_speed $ob(ngk_speed)
+		incr ob(level_ngk_speed) -1
+		puts "North gk speed decreased; new speed is now $ob(ngk_speed)"  
+	}
+}
+
+proc increase_ngk_speed {} {
+	global ob
+	set cur [lindex $ob(lngk_speed) [expr {$ob(level_ngk_speed)-1}]] 
+	set index [lsearch $ob(lngk_speed) $cur]
+	set mikos [llength $ob(lngk_speed)]
+	if {[expr {$index+1}]<$mikos} {
+		set ob(ngk_speed) [lindex $ob(lngk_speed) [expr {$index+1}]]
+		wshm ankle_games_opponent_speed $ob(ngk_speed)
+		incr ob(level_ngk_speed) 1
+		puts "North gk speed increased; new speed is now $ob(ngk_speed)"  
+	}
+}
+
+proc decrease_stiffness {} {
+	global ob
+	set cur [lindex $ob(lstiff) [expr {$ob(level_stiff)-1}]] 
+	set index [lsearch $ob(lstiff) $cur]
+	if {[expr {$index-1}]>=0} {
+		set ob(stiff) [lindex $ob(lstiff) [expr {$index-1}]]
+		incr ob(level_stiff) -1
+		puts "stiffness decreased; new stiffness is now $ob(stiff)"  
+	}
+}
+
+proc increase_stiffness {} {
+	global ob		
+	set cur [lindex $ob(lstiff) [expr {$ob(level_stiff)-1}]] 
+	set index [lsearch $ob(lstiff) $cur]
+	set mikos [llength $ob(lstiff)]
+	if {[expr {$index+1}]<$mikos} {
+		set ob(stiff) [lindex $ob(lstiff) [expr {$index+1}]]
+		incr ob(level_stiff) 1
+		puts "stiffness increased; new stiffness is now $ob(stiff)"  
+	}
+}
+
+proc decrease_ball_speed {} {
+	global ob
+	set cur [lindex $ob(lbspeed) [expr {$ob(level_bspeed)-1}]] 
+	set index [lsearch $ob(lbspeed) $cur]
+	#puts "cur = $cur index = $index"
+	if {[expr {$index-1}]>=0} {
+		set ob(bspeed) [lindex $ob(lbspeed) [expr {$index-1}]]
+		wshm ankle_games_speed $ob(bspeed)
+		incr ob(level_bspeed) -1
+		puts "ball speed decreased; new ball speed is now $ob(bspeed)"  
+	}
+}
+
+proc increase_ball_speed {} {
+	global ob
+	set cur [lindex $ob(lbspeed) [expr {$ob(level_bspeed)-1}]] 
+	set index [lsearch $ob(lbspeed) $cur]
+	#puts "cur = $cur index = $index"
+	set mikos [llength $ob(lbspeed)]
+	if {[expr {$index+1}]<$mikos} {
+		set ob(bspeed) [lindex $ob(lbspeed) [expr {$index+1}]]
+		wshm ankle_games_speed $ob(bspeed) 
+		incr ob(level_bspeed) 1
+		puts "ball speed increased; new ball speed is now $ob(bspeed)"  
+	}
+} 
+
+proc decrease_size_paddles {} {
+	global ob
+	if {$ob(padw) >=38} {
+		set ob(padw) [expr {$ob(padw)-4}]
+		wshm ankle_games_paddle_size $ob(padw)
+		if {$ob(padw)<50} {
+			set ob(padh) [expr {$ob(padh)-4}]
+			set ob(npd) [expr {$ob(npd)-2}]
+			set ob(spd) [expr {$ob(spd)+2}]
+		}
+		puts "paddle size decreased, height=$ob(padh), width=$ob(padw)"  
+	} 
+}
+
+proc increase_size_paddles {} {
+	global ob
+	if {$ob(padw) <=66} {
+		set ob(padw) [expr {$ob(padw)+4}]
+		wshm ankle_games_paddle_size $ob(padw)
+		if {$ob(npd)<100} {
+			set ob(npd) [expr {$ob(npd)+2}]
+			set ob(spd) [expr {$ob(spd)-2}]
+			set ob(padh) [expr {$ob(padh)+4}]
+		}
+		puts "paddle size increased, height=$ob(padh), width=$ob(padw)"  
+	} 
+}
+
+# the main loop
+proc moveball {} {
+	global ob mob
+
+	if {!$ob(ndefended) && !$ob(sdefended)} {
+		eval .c move ball $ob(dir)
+		set mob(balldir) $ob(dir)
+	}
+
+	# see if the ball has hit anything - paddle or wall.
+	set bbox [.c bbox ball]
+    	set ob(bbox) $bbox
+
+	ballofftable $bbox
+
+	set ob(bat) [lindex [eval .c find overlapping $bbox] 0]
+	if {$ob(bat) == $ob(field)} {
+		set ob(bat) [lindex [eval .c find overlapping $bbox] 1]
+	}
+
+	# lastbat hack prevents wobbles
+	if {$ob(bat) != $ob(ball)
+		&& $ob(bat) != $ob(lastbat)
+		&& $ob(bat) != $ob(line)
+		&& $ob(bat) != $ob(circle)
+		&& $ob(bat) != $ob(gkarea1,s)	
+		&& $ob(bat) != $ob(gkarea2,s)	
+		&& $ob(bat) != $ob(gkarea3,s)	
+		&& $ob(bat) != $ob(gkarea1,n)	
+		&& $ob(bat) != $ob(gkarea2,n)	
+		&& $ob(bat) != $ob(gkarea3,n)
+		&& $ob(bat) != $ob(field)
+		} {
+		set forw [expr {1.0 + (($ob(forw) + [irand $ob(forw)])/50.0)}]
+		set side [expr {(0.0 - $ob(side) + [irand $ob(side)])/50.0}]
+		
+		foreach {oxr oyr} $ob(dir) {break}
+
+		switch $ob(bat) $ob(pad,n) {
+		        set xr $side
+		        set yr $forw
+		        hitpaddle_n
+		} $ob(pad,s) {
+		        set xr $side
+		        set yr [expr {0 - $forw}]
+		        hitpaddle_s      
+		} $ob(wall,ne) {
+		        if {$ob(livewall,n)} {
+		                set xr $side
+		                set yr $forw
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+				defend $ob(bbox) $xr $yr n	
+		        }
+		} $ob(wall,nw) {
+		        if {$ob(livewall,n)} {
+		                set xr $side
+		                set yr $forw
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+				defend $ob(bbox) $xr $yr n
+		        }
+		}	$ob(wall,se) {
+		        if {$ob(livewall,s)} {
+		                set xr $side
+		                set yr [expr {0 - $forw}]
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set ob(sgoal) 0
+				set xr $oxr
+		                set yr [expr {0 - $oyr}]
+				defend $ob(bbox) $xr $yr s
+		        }
+		}	$ob(wall,sw) {
+		        if {$ob(livewall,s)} {
+		                set xr $side
+		                set yr [expr {0 - $forw}]
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+				set ob(sgoal) 0
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+				defend $ob(bbox) $xr $yr s
+		        }
+		} $ob(wall,w) {
+		        if {$ob(livewall,w)} {
+		                set xr $forw
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wall,e) {
+		        if {$ob(livewall,e)} {
+		                set xr [expr {0 - $forw}]
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wallgp,n) {
+		        if {$ob(livewallgp,n)} {
+		                set xr [expr {$side/10.}]
+				set yr [expr {-$forw/10.}]
+				hitwall
+				if {$ob(sound)} {
+					nbeep 5 C 300
+				}
+		                shake $ob(bat)
+				incr mob(redscore)
+				wshm ankle_games_score $mob(redscore) 
+				incr mob(goalrow)
+				if {$mob(goalrow) > $mob(maxinrow)} {
+					set mob(maxinrow) $mob(goalrow)
+				}
+				after 1000 startball n
+		        } else {
+		                set xr $oxr
+		                set yr [expr {0 - $oyr}]
+		        }
+		} $ob(wallgp,s) {
+		        if {$ob(livewallgp,s)} {
+				set xr [expr {$side/10.}]
+				set yr [expr {($forw)/10.}]
+		                hitwall
+ 				if {$ob(sound)} {
+					nbeep 1 A 500
+				} 
+		                shake $ob(bat)
+				incr mob(bluescore)
+				wshm ankle_games_opponent_score $mob(bluescore) 
+				after 1000 startball s
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wall,w) {
+		        if {$ob(livewallgp,w)} {
+		                set xr $forw
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        } 
+		} $ob(wall,e) {
+		        if {$ob(livewallgp,e)} {
+		                set xr [expr {0 - $forw}]
+		                set yr $side
+		                hitwall
+		                shake $ob(bat)
+		        } else {
+		                set xr [expr {0 - $oxr}]
+		                set yr $oyr
+		        }
+		} default {
+			error "woops! switch default should not get here, bat = $ob(bat)"
+		}
+		
+		# set new direction.
+		set ob(dir) "$xr $yr"                
+
+		set ob(lastbat) $ob(bat)
+		}
+	# end of ball hits thing, schedule a new
+	
+	foreach {x y} [getxy] break
+	dodrag .c $x $y
+
+	if {!$ob(sdefended)} {
+	# ball moves towards south wall, but not yet defended from the goalkeeper
+		dodrag .c $x $y
+	} else { 
+		dodragball .c $x $y		
+	} 
+
+	# for moving north goalkeeper
+	if {$ob(ngoal)} {
+		movegoalkeeper
+	}
+	if {$ob(ndefended)} { 
+		if {$ob(moveback)} {
+			movegoalkeeperback
+		} 
+		if {$ob(attack)} {
+			start_attack
+		} 
+	}
+	if {$ob(moveback_v)} {
+		movegoalkeeperback_v
+	}
+	# did the patient move?
+	if {$ob(check_move_dp)} {
+		#check_vel dp
+	} elseif {$ob(check_move_ie)} {
+		#check_vel ie
+	}
+
+	if {$ob(move_ie)} {
+		set y [rshm ankle_dp_pos]
+		#set dest [list $ob(sgoalx) $y]
+		set dest [list $ob(sgoalx) 0.0]
+		wshm ankle_games_trgt $ob(sgoalx)
+		wshm ankle_games_hdir 1
+		after $ob(pre_wait_ie_out) [list adap_moveit "hriz" {0 $ob(slotticks_ie) 1} $dest]
+		set ob(moveit_wait) [list adap_moveit "hriz" {0 1 0} $dest]]
+		set ob(moveit_state) pre_wait
+		set ob(move_ie) 0
+	}
+
+	# every $ob(ticks) ms, the ball moves
+	if {$ob(endgame) <= 0 || $mob(shots) < $ob(endgame)} {
+		if {$ob(paused)== "no"} { 
+			set ob(after) [after $ob(tick) moveball]
+		}
+	}
+}
+
+proc prepare_logging {} {
+	global ob mob env argc argv
+
+    # game name and patient name
+    # they come in as command line args, usually from the
+    # cons "game console" program
+    # in a HIPAA setting, the patient name will be a numeric ID.
+    set ob(logdirbase) $::env(THERAPIST_HOME)
+
+    set ob(gamename) games/eval/soccer_log
+    set ob(patname) $mob(who)
+
+    set env(PATID) $mob(who)
+
+	if {$ob(asklog)} { 
+		if {![info exists env(PATID)]} {
+	    		error "Please enter a Patient ID"
+	   	 	exit
+		}
+		if {$env(PATID) == ""} {
+	    		error "Please enter a Patient ID"
+	    		exit
+		}
+	}
+
+    if {$argc >= 1} {
+	set ob(gamename) [lindex $argv 0]
+    }
+    if {$argc >= 2} {
+	set ob(patname) [lindex $argv 1]
+    }
+
+    set ob(gametype) eval
+
+	if {$ob(ankle)} {
+		set ob(logfnid) 19
+		set ob(logvars) 33
+    	} 
+
+	# shall we log each slot in its own file?
+	set ob(logperslot) no
+
+    	set curtime [clock seconds]
+    	set ob(datestamp) [clock format $curtime -format "%Y%m%d_%a"]
+    	set ob(timestamp) [clock format $curtime -format "%H%M%S"]
+    	set ob(dirname) [file join $ob(logdirbase) $ob(patname) $ob(gametype) $ob(datestamp) ]
+
+    	if {$mob(savelog)} {
+		wshm logfnid $ob(logfnid)
+    	}
+}
+
+# logging
+# open logfile-per-run and logfile-per-slot.
+proc leave_target_start_log {} {
+    global ob mob
+
+    if {$mob(savelog)} {
+	set ob(slotnum) $mob(shots)
+	set ob(tailname) [file tail $ob(gamename)]
+	if {$ob(logperslot)} {
+		set slotlogfilename [join [list $ob(tailname) $ob(timestamp)$ob(slotpairnum).dat] _]
+		set slotlogfilename [file join $ob(dirname) $slotlogfilename]
+		start_log $slotlogfilename $ob(logvars)
+		puts "logging per slot $slotlogfilename"
+	} elseif {$mob(startlogging) == 1} {
+		set mob(startlogging) 0
+	 	# start multi log on only first gate
+	 	set slotlogfilename [join [list $ob(tailname) $ob(timestamp)multi.dat] _]
+	 	set slotlogfilename [file join $ob(dirname) $slotlogfilename]
+	 	start_log $slotlogfilename $ob(logvars)
+	 	puts "logging per run $slotlogfilename"
+	}
+    }
+}
+
+# close logfile-per-slot.
+proc enter_target_stop_log {} {
+    global ob
+    if {$ob(logperslot)} {
+	stop_log
+    }
+    # never stop multi log on enter.
+}
+
+# set up the menu (once)
+proc domenu {} {
+	global env mob
+	set m [menu_init .menu]
+	menu_v $m who "Player's ID" $env(PATID)
+	menu_v $m whoN "Player's Name" Player
+	menu_v $m comp "Opponent's Name" Computer
+	menu_v $m endgame "Game Length (Shots)" 330
+	menu_v $m padw "Goalkeeper Width (30-80)" 55
+	menu_v $m level "Speed level (1-15)" 7
+	
+	frame $m.stiff
+	label $m.stiff.stiff_label -text "Stiffness:"
+	set mob(menu,stiff) 80
+
+	radiobutton $m.stiff.stiff_low -text [imes "Low Stiffness"] \
+		-variable mob(menu,stiff) -relief flat -value 60
+	radiobutton $m.stiff.stiff_medium -text [imes "Medium Stiffness"] \
+		-variable mob(menu,stiff) -relief flat -value 80
+	radiobutton $m.stiff.stiff_high -text [imes "High Stiffness"] \
+		-variable mob(menu,stiff) -relief flat -value 100
+	pack $m.stiff -anchor w
+	pack $m.stiff.stiff_label -anchor w
+	pack $m.stiff.stiff_low -anchor w
+	pack $m.stiff.stiff_medium -anchor w
+	pack $m.stiff.stiff_high -anchor w
+	menu_t $m blank0 "" ""
+	menu_cb $m "savelog" "Logging"
+	menu_t $m blank1 "" ""
+	menu_cb $m "accuracy" "Challenge with accuracy"
+	menu_cb $m "nomotorforces_y" "No Motor Forces (D/P)"
+	menu_cb $m "nomotorforces_x" "No Motor Forces (I/E)"
+	menu_t $m blank2 "" ""
+	menu_cb $m "novisual" "No Visual Aid"
+	menu_cb $m "audio" "No Audio"
+	menu_t $m blank3 "" ""
+
+	menu_t $m redscore "Red's Score"
+	menu_t $m bluescore "Blue's Score"
+	menu_t $m saves Saves
+	menu_t $m shots Shots
+	menu_t $m goalrow "Current Streak"
+	menu_t $m maxinrow "Longest Streak"
+	menu_b $m docalibrate "            Calibrate            " calibrate_immed
+	menu_t $m calibrate "Calibrated:" ""
+	menu_b $m newgame "New Game (n)" new_soccer
+	menu_b $m stopgame "Stop Game (s)" stop_soccer
+	menu_b $m quit "Quit (q)" {done}
+}
+
+proc done {} {
+	stop_log
+	stop_soccer
+	stop_rtl
+	exit
+}
+
+init_soccer
