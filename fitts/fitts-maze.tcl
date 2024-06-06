@@ -273,50 +273,42 @@ proc start_game {} {
         create_pointer 890 490
     }
 
-    proc set_movebox { } {
-        global t_boundaries pointer cell_width cell_height line_width ob .game.c pointer current_path_no path
-        set current_box [lindex $path $current_path_no]
-        puts $current_box
-
+    proc check_movebox {} {
+        global pointer path level max_level_length mode increment cell_width cell_height line_width current_movebox_index move_segments
         set coords [.game.c coords $pointer]
+        puts $current_movebox_index
+
         set cx [expr {([lindex $coords 0] + [lindex $coords 2]) / 2}]
         set cy [expr {([lindex $coords 1] + [lindex $coords 3]) / 2}]
-        puts "${cx}_${cy}"
-        puts $current_path_no
 
-        set cell_x [expr {int($cx / $cell_width)}]
-        set cell_y [expr {int($cy / $cell_height)}]
-
-        if {$cell_x != [lindex $current_box 1] || $cell_y != [lindex $current_box 0]} {
-            #close current movebox
-            incr current_path_no
-            set next_box [lindex $path $current_path_no]
-            set next_x [lindex $next_box 1]
-            set next_y [lindex $next_box 0]
-            set current_x [lindex $current_box 1]
-            set current_y [lindex $current_box 0]
-            set x1 [expr { $cell_width * $next_x}]
-            set x2 [expr { $cell_width * ($next_x + 1)}]
-            set y1 [expr { $cell_height * $next_y}]
-            set y2 [expr { $cell_height * ($next_y + 1)}]
-            set x_middle [expr { ($x2 + $x1) / 2 }]
-            set y_middle [expr { ($y2 + $y1) / 2 }]
-            if { [expr {$next_x - $current_x}] == 1} {
-                # coming from right, right to left
-                .game.c create line $x1 $y_middle $x2 $y_middle -width [expr {$line_width / 2}] -fill "red"
-            } elseif {[expr {$next_x - $current_x}] == -1} {
-                #coming from left
-                .game.c create line $x2 $y_middle $x1 $y_middle -width [expr {$line_width / 2}] -fill "red"
-            } elseif {[expr {$next_y - $current_y}] == 1} {
-                # coming from above
-                .game.c create line $x_middle $y1 $x_middle $y2 -width [expr {$line_width / 2}] -fill "red"
-            } elseif {[expr {$next_y - $current_y}] == -1} {
-                #coming from below
-                .game.c create line $x_middle $y2 $x_middle $y1 -width [expr {$line_width / 2}] -fill "red"
+        set segment_current [lindex $move_segments $current_movebox_index]
+        set x1 [lindex [lindex $segment_current 0] 0]
+        set y1 [lindex [lindex $segment_current 0] 1]
+        set x2 [lindex [lindex $segment_current 1] 0]
+        set y2 [lindex [lindex $segment_current 1] 1]
+        if { mb_state == paused } {
+            movebox 0 0 {0 $ob(slotticks) 1} [list {$x1,$y1,0.05,0.05}] [list {$x2,$y2,0.05,0.05}]
+            set ob(mb_state) active
+        }
+        .game.c create line $x1 $y1 $x2 $y2 -width [expr {$line_width / 4}] -fill "blue"
+        if { $x1 > $x2 } {
+            if { $cx <= $x2 + $line_width} {
+                incr current_movebox_index
+                stop_movebox 0
+                set ob(mb_state) paused
+            }
+        } elseif { $x1 < $x2 } {
+            if { $cx >= $x2 - $line_width } {
+                incr current_movebox_index
+            }
+        } elseif { $y1 > $y2 } {
+            if { $cy <= $y2 + $line_width } {
+                incr current_movebox_index
             } 
-        } else {
-            # check for turns
-
+        } elseif { $y1 < $y2 } {
+            if { $cy >= $y2 - $line_width} {
+                incr current_movebox_index
+            }
         }
     }
 
@@ -342,6 +334,13 @@ proc start_game {} {
                 puts "Congratulations! You've completed all levels."
                 exit
             }
+            set current_movebox_index 0
+            stop_movebox 0
+            set ob(mb_state) active
+            after 100 movebox 0 0 {0 $ob(slotticks) 1} [list {$cx,$cy,0.05,0.05}] [list {0.0,0.0,0.05,0.05}]
+            after 1000 stop_movebox 0
+            set ob(mb_state) paused
+            
             after 500 [list draw_path $path [expr {$level * 2}]]
         }
     }
@@ -525,6 +524,7 @@ proc start_game {} {
         set dy [expr {$scaled_y - ($y1 + $y2) / 2}]
         .game.c coords $pointer [expr {$x1 + $dx}] [expr {$y1 + $dy}] [expr {$x2 + $dx}] [expr {$y2 + $dy}]
         check_pointer_position
+        check_movebox
 	
 	after 5 new_move_pointer
     }
@@ -598,5 +598,7 @@ set cell_height [expr {$canvas_height / $grid_height}]
 set half_cell_width [expr {$cell_width / 2}]
 set half_cell_height [expr {$cell_height / 2}]
 set line_width 80
+
+set current_movebox_index 0
 # Open the start menu
 open_start_menu
