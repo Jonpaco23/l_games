@@ -27,6 +27,7 @@ source $::env(I18N_HOME)/i18n.tcl
 # is this arm bot? (of course)
 localize_robot
 
+# Initialize starting menu
 proc open_start_menu {} {
     # Create the start menu window
     toplevel .menu
@@ -107,6 +108,7 @@ proc start_game {} {
         set x_middle [expr {($x2 + $x1) / 2}]
         set y_middle [expr {($y2 + $y1) / 2}]
 
+        # Orientation of each square determins where each arm is drawn
         switch $orientation {
             "N" {
                 .game.c create line $x_middle $y2 $x_middle $y_middle -width $line_width -fill $colour   ;# Vertical arm
@@ -139,6 +141,7 @@ proc start_game {} {
         array unset t_boundaries
         array unset move_segments 
 
+        # Draw maze based on current level
         for {set i 0} {$i < $level_length} {incr i} {
             set prev [lindex $path $i-1]
             set current [lindex $path $i]
@@ -213,7 +216,7 @@ proc start_game {} {
                 set direction2 "W"
             }
 
-
+            # Draw T's based on direction. Drawn using two lines through each other
             if {$direction1 ne $direction2} {
                 if {[lindex $current 0] == [lindex $prev 0]} {
                     if {[lindex $current 0] == [lindex $next 0]} {
@@ -270,9 +273,11 @@ proc start_game {} {
         }
 
         puts "Move Segments: $move_segments"
+        # Create pointer at the center of the maze
         create_pointer 890 490
     }
 
+    # Function that checks if there is a current active movebox and creates one if there is none currently active
     proc check_movebox {} {
         global pointer path level max_level_length mode increment cell_width cell_height line_width current_movebox_index move_segments
         set coords [.game.c coords $pointer]
@@ -312,7 +317,7 @@ proc start_game {} {
         }
     }
 
-
+    # Function to check pointer position. If pointer is in the final square, increment level and reset arm back to center.
     proc check_pointer_position {} {
         global pointer path level max_level_length mode increment cell_width cell_height
         set coords [.game.c coords $pointer]
@@ -320,9 +325,9 @@ proc start_game {} {
         set cy [expr {([lindex $coords 1] + [lindex $coords 3]) / 2}]
         set final_cell [lindex $path [expr {$level * 2  - 1}]]
         set final_x [expr { int($cx / $cell_width)}]
-        set final_y [expr { int($cy / $cell_height)}]
-        # puts "$final_cell $final_x $final_y"
+        set final_y [expr { int($cy / $cell_height)}]=
 
+        # Checking if pointer is in the final square
         if {$final_x == [lindex $final_cell 1] && $final_y == [lindex $final_cell 0]} {
             if {$mode == "sequential"} {
                 incr level
@@ -334,6 +339,8 @@ proc start_game {} {
                 puts "Congratulations! You've completed all levels."
                 exit
             }
+
+            # Resetting arm
             set current_movebox_index 0
             stop_movebox 0
             set ob(mb_state) active
@@ -354,10 +361,11 @@ proc start_game {} {
         set pointer [.game.c create oval $a $b [expr {$a + 20}] [expr {$b + 20}] -fill black]
         # bind .game.c <B1-Motion> {move_pointer %x %y}
 
-	new_move_pointer
+	    new_move_pointer
         focus -force .
     }
 
+    # Function to draw star-like obstacles on the maze. Currently not being used but may be implemented in the future
     proc make_star {x y color size} {
 
         set pi 3.1415926535897931
@@ -385,7 +393,7 @@ proc start_game {} {
 
     
 
-    # Function to move the pointer within boundaries
+    # Function to check if pointer is currently inside of the boundaries of a cell
     proc isInsideBar {x y cx cy} {
         global t_boundaries pointer cell_width cell_height line_width
 
@@ -407,6 +415,7 @@ proc start_game {} {
         set x_middle [expr { ($x2 + $x1) / 2 }]
         set y_middle [expr { ($y2 + $y1) / 2 }]
 
+        # Check boundaries based on orientation
         switch $orientation {
             "N" {
                 return [expr {($x >= $x_middle - $line_width / 2) && ($x <= $x_middle + $line_width / 2) && ($y > [expr {$y_middle + $line_width / 2}]) ||
@@ -427,6 +436,7 @@ proc start_game {} {
         }
     }
 
+    # Deprecated move_pointer function, used primarily for testing
     proc move_pointer {x y} {
         global t_boundaries pointer cell_width cell_height line_width ob .game.c pointer
 
@@ -507,26 +517,31 @@ proc start_game {} {
         }
     }
 
+    # Function that updates the current location of the pointer. Additionally checks other information related to pointer position (if it is inside of a box).
     proc new_move_pointer {} {
-	global t_boundaries pointer cell_width cell_height line_width ob .game.c pointer
-	set x 0.0
-	set y 0.0
-	    set x [getptr x]
- 	    set y [getptr y]
-	puts "${x}_${y}"
-	set scaled_x [expr {$x * (900 / 0.22) + 900}]
-	set scaled_y [expr {$y * -1 * (500 / 0.22)} + 500]
+        global t_boundaries pointer cell_width cell_height line_width ob .game.c pointer
+        set x 0.0
+        set y 0.0
+        # Get coordinates of the arm
+            set x [getptr x]
+            set y [getptr y]
+        puts "${x}_${y}"
+        # Scale coordinates accordingly
+        set scaled_x [expr {$x * (900 / 0.22) + 900}]
+        set scaled_y [expr {$y * -1 * (500 / 0.22)} + 500]
 
-	set pos [.game.c coords $pointer]
-        lassign $pos x1 y1 x2 y2
+        set pos [.game.c coords $pointer]
+            lassign $pos x1 y1 x2 y2
 
-        set dx [expr {$scaled_x - ($x1 + $x2) / 2}]
-        set dy [expr {$scaled_y - ($y1 + $y2) / 2}]
-        .game.c coords $pointer [expr {$x1 + $dx}] [expr {$y1 + $dy}] [expr {$x2 + $dx}] [expr {$y2 + $dy}]
-        check_pointer_position
-        check_movebox
-	
-	after 5 new_move_pointer
+            set dx [expr {$scaled_x - ($x1 + $x2) / 2}]
+            set dy [expr {$scaled_y - ($y1 + $y2) / 2}]
+            # Create pointer
+            .game.c coords $pointer [expr {$x1 + $dx}] [expr {$y1 + $dy}] [expr {$x2 + $dx}] [expr {$y2 + $dy}]
+            check_pointer_position
+            check_movebox
+        
+        # Loop every 5 ticks
+        after 5 new_move_pointer
     }
 
     start_rtl
@@ -549,7 +564,7 @@ proc start_game {} {
 
 }
 
-# Given path
+# Preconfigured maze
 set path {
     {2 4 up}
     {2 3 up}
